@@ -1705,6 +1705,80 @@ def set_auto_update_enabled(enabled):
     save_json_file(AUTO_UPDATE_FILE, {"enabled": enabled})
     write_shared_state(auto_update_enabled=enabled)
 
+def _extract_var_from_file(filepath, var_name):
+    """Extract a string or tuple constant assigned to var_name using AST."""
+    try:
+        with open(filepath) as f:
+            tree = ast.parse(f.read())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == var_name:
+                        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                            return node.value.value
+                        if isinstance(node.value, ast.Tuple):
+                            return tuple(ast.literal_eval(e) for e in node.value.elts)
+    except Exception:
+        pass
+    return None
+
+def _install_hdmi_from_patch(patch_path):
+    """Extract and install HDMI GUI from a dev_patch_installer.py file."""
+    gui_code = _extract_var_from_file(patch_path, "GUI_CODE")
+    autostart = _extract_var_from_file(patch_path, "AUTOSTART_CONFIG")
+    if not gui_code or not autostart:
+        logger.warning("HDMI install: GUI_CODE or AUTOSTART_CONFIG not found in patch")
+        return False
+    try:
+        gui_file = os.path.join(REPO_DIR, "pi_gui.py")
+        with open(gui_file, "w") as f:
+            f.write(gui_code)
+        autostart_dir = os.path.expanduser("~/.config/autostart")
+        os.makedirs(autostart_dir, exist_ok=True)
+        python_path = "/home/sira/feederbot/bin/python"
+        if not os.path.exists(python_path):
+            python_path = "/usr/bin/python3"
+        with open(os.path.join(autostart_dir, "fishfeeder_gui.desktop"), "w") as f:
+            f.write(autostart.format(gui_path=gui_file, python_path=python_path))
+        logger.info("HDMI GUI auto-installed from dev patch")
+        return True
+    except Exception as e:
+        logger.error("Failed to auto-install HDMI: %s", e)
+        return False
+
+def _install_web_from_patch(patch_path):
+    """Extract and install Web Dashboard from a dev_patch_installer.py file."""
+    web_code = _extract_var_from_file(patch_path, "WEB_CODE")
+    web_svc = _extract_var_from_file(patch_path, "WEB_SERVICE")
+    if not web_code or not web_svc:
+        logger.warning("Web install: WEB_CODE or WEB_SERVICE not found in patch")
+        return False
+    try:
+        web_file = os.path.join(REPO_DIR, "web_dashboard.py")
+        with open(web_file, "w") as f:
+            f.write(web_code)
+        svc_path = "/etc/systemd/system/web_dashboard.service"
+        subprocess.run(["sudo", "tee", svc_path], input=web_svc.encode(), check=True)
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+        subprocess.run(["sudo", "systemctl", "enable", "web_dashboard"], check=True)
+        subprocess.run(["sudo", "systemctl", "restart", "web_dashboard"], check=True)
+
+        ngrok_cfg = load_json_file(NGROK_CONFIG_FILE, {})
+        ngrok_auth = ngrok_cfg.get("auth") or os.environ.get("NGROK_AUTH", "")
+        ngrok_domain = ngrok_cfg.get("domain") or os.environ.get("NGROK_DOMAIN", "")
+        ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if ngrok_path and ngrok_auth and ngrok_domain:
+            subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
+            subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_auth], capture_output=True, timeout=10)
+            subprocess.Popen([ngrok_path, "http", "--url=" + ngrok_domain, "5000"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        logger.info("Web Dashboard auto-installed from dev patch")
+        return True
+    except Exception as e:
+        logger.error("Failed to auto-install Web: %s", e)
+        return False
+
 def _git(*args, **kwargs):
     kwargs.setdefault("cwd", REPO_DIR)
     kwargs.setdefault("capture_output", True)
@@ -1753,6 +1827,15 @@ async def process_git_update():
                                update_changes=commits, update_type=update_type)
             await asyncio.sleep(1)
             _git("checkout", f"{GIT_REMOTE}/{GIT_BRANCH}", "--", "dev_patch_installer.py")
+
+            # Auto-install components based on AUTO_DEV_PATCH_INSTALL_CHOICES
+            choices = _extract_var_from_file(DEV_PATCH_INSTALLER, "AUTO_DEV_PATCH_INSTALL_CHOICES")
+            if isinstance(choices, tuple):
+                if 'HDMI' in choices:
+                    _install_hdmi_from_patch(DEV_PATCH_INSTALLER)
+                if 'WEB' in choices:
+                    _install_web_from_patch(DEV_PATCH_INSTALLER)
+
             with open(DEV_PATCH_VERSION_FILE, "w") as f:
                 f.write("1")
             write_shared_state(update_status="up_to_date", last_updated=time.time(),

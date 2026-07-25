@@ -14,6 +14,7 @@ from discord.ext import commands
 
 REPO_DIR = os.environ.get("REPO_DIR", "/home/sira/fishfeeder")
 
+AUTO_DEV_PATCH_INSTALL_CHOICES = 'HDMI','WEB'      ##Could be uh either of thises one... for auto updating.
 def load_dotenv():
     env_path = os.path.join(REPO_DIR, ".env")
     if os.path.exists(env_path):
