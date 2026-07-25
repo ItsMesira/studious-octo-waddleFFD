@@ -2239,36 +2239,6 @@ async def cmd_schedule_clear(ctx):
     await notify_log_channel(t("sched_cleared_all"))
 
 
-@bot.command(name="update")
-@owner_check()
-async def cmd_update(ctx):
-    await ctx.send(t("update_pulling"))
-    try:
-        # Pull from git
-        out = subprocess.check_output(["/usr/bin/git", "-C", REPO_DIR, "pull"], stderr=subprocess.STDOUT, text=True)
-        await ctx.send(t("update_git_out", out=out))
-
-        # Read the newly pulled code
-        with open(__file__, 'r') as f:
-            new_code = f.read()
-
-        await ctx.send("🔍 **Running Multi-Stage Safety Check...**")
-        ok, msg = validate_code(new_code)
-
-        if not ok:
-            await ctx.send(f"❌ **SAFETY BLOCK!** Update cancelled.\nReason:\n```\n{msg}\n```\nRolling back Git...")
-            subprocess.run(["/usr/bin/git", "-C", REPO_DIR, "reset", "--hard", "HEAD~1"])
-            await ctx.send(t("update_rollback"))
-            await notify_log_channel(f"⚠️ Git update blocked by safety guard: {msg}")
-            return
-
-        await ctx.send("✅ Safety checks passed! Restarting...")
-        await notify_log_channel(t("update_log", user=ctx.author))
-        subprocess.run(["sudo", "systemctl", "restart", "fishfeeder.service"])
-    except Exception as e:
-        await ctx.send(t("update_failed", e=e))
-
-
 
 # ----------------- graceful shutdown -----------------
 def cleanup_and_exit(signum=None, frame=None):
