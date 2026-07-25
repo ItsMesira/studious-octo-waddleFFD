@@ -106,7 +106,7 @@ DEV_PATCH_INSTALLER = os.path.join(REPO_DIR, "dev_patch_installer.py")
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 DEV_PATCH_VERSION_FILE = os.path.join(REPO_DIR, ".dev_patch_version")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "1.0.0"
+BOT_VERSION = "1.0.1"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
