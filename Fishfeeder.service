@@ -1,0 +1,15 @@
+[Unit]
+Description=FishFeeder Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sira
+WorkingDirectory=/home/sira/fishfeeder
+ExecStart=/home/sira/feederbot/bin/python /home/sira/fishfeeder/fishfeeder_bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

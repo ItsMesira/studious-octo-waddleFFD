@@ -1,0 +1,9 @@
+.env
+*.backup
+__pycache__/
+*.pyc
+auto_update.json
+shared_state.json
+state.json
+schedules.json
+command.json
