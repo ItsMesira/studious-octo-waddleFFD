@@ -3,9 +3,9 @@
 Dev Patch Installer — temporarily runs as the bot to install developer tools.
 Upload this file via the main bot's !devpatchupload command.
 The installer replaces the main bot, installs extras, then restores the original.
-
 UPDATE_TYPE: Full Installer (HDMI Dashboard + Web UI + ngrok tunnel)
 """
+##DEV PATCH VERSION = 2.3.1
 import os, sys, shutil, asyncio, subprocess, time, json
 from datetime import datetime
 
