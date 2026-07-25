@@ -3235,8 +3235,13 @@ async def update_status(ctx):
     last_upd = s.get("last_updated", 0)
     check_ts = datetime.fromtimestamp(last_check).strftime("%H:%M %d/%m") if last_check else "Never"
     upd_ts = datetime.fromtimestamp(last_upd).strftime("%H:%M %d/%m") if last_upd else "Never"
+    installer_ver = s.get("installer_version")
+    if not installer_ver and os.path.exists(DEV_PATCH_VERSION_FILE):
+        with open(DEV_PATCH_VERSION_FILE) as f:
+            installer_ver = f.read().strip()
+    patch_line = f"\n**Patch Version:** v{installer_ver}" if installer_ver else ""
     await ctx.send(
-        f"**Bot Version:** v{BOT_VERSION}\n"
+        f"**Bot Version:** v{BOT_VERSION}{patch_line}\n"
         f"**Auto-Update:** {'✅ ON' if enabled else '❌ OFF'}\n"
         f"**Status:** {s.get('update_status', 'unknown')}\n"
         f"**Last Check:** {check_ts}\n"
