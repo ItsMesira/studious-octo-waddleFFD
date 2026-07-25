@@ -1776,6 +1776,9 @@ async def git_update_checker():
                     r2 = _git("rev-list", "--count", f"HEAD..{GIT_REMOTE}/{GIT_BRANCH}")
                     behind = int(r2.stdout.strip()) if r2.stdout.strip() else 0
                     last_fetch = now
+                    write_shared_state(last_update_check=now)
+                    if behind == 0:
+                        write_shared_state(update_status="up_to_date")
                 else:
                     logger.debug("git fetch: %s", r.stderr)
             if behind > 0:
