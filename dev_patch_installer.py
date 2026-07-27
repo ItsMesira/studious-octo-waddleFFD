@@ -5,7 +5,7 @@ Upload this file via the main bot's !devpatchupload command.
 The installer replaces the main bot, installs extras, then restores the original.
 UPDATE_TYPE: Full Installer (HDMI Dashboard + Web UI + ngrok tunnel)
 """
-##DEV PATCH VERSION = 2.3.3
+##DEV PATCH VERSION = 2.3.4
 import os, sys, shutil, asyncio, subprocess, time, json
 from datetime import datetime
 
