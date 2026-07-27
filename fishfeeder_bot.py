@@ -1811,16 +1811,7 @@ async def process_git_update():
         commits = [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
         is_new = needs_patch and not os.path.exists(DEV_PATCH_VERSION_FILE)
 
-        if needs_bot:
-            write_shared_state(update_status="updating_bot", update_component="bot",
-                               update_changes=commits, bot_version=BOT_VERSION)
-            await asyncio.sleep(1)
-            _git("pull", GIT_REMOTE, GIT_BRANCH)
-            write_shared_state(update_status="restarting", last_updated=time.time())
-            await asyncio.sleep(1)
-            subprocess.run(["sudo", "systemctl", "restart", "fishfeeder.service"])
-            sys.exit(0)
-
+        # Process patch FIRST so installs happen before bot restart
         if needs_patch:
             update_type = "Dev Patch"
             try:
@@ -1837,7 +1828,6 @@ async def process_git_update():
             await asyncio.sleep(1)
             _git("checkout", f"{GIT_REMOTE}/{GIT_BRANCH}", "--", "dev_patch_installer.py")
 
-            # Auto-install components based on AUTO_DEV_PATCH_INSTALL_CHOICES
             choices = _extract_var_from_file(DEV_PATCH_INSTALLER, "AUTO_DEV_PATCH_INSTALL_CHOICES")
             if isinstance(choices, tuple):
                 if 'HDMI' in choices:
@@ -1847,6 +1837,18 @@ async def process_git_update():
 
             with open(DEV_PATCH_VERSION_FILE, "w") as f:
                 f.write("1")
+
+        if needs_bot:
+            write_shared_state(update_status="updating_bot", update_component="bot",
+                               update_changes=commits, bot_version=BOT_VERSION)
+            await asyncio.sleep(1)
+            _git("pull", GIT_REMOTE, GIT_BRANCH)
+            write_shared_state(update_status="restarting", last_updated=time.time())
+            await asyncio.sleep(1)
+            subprocess.run(["sudo", "systemctl", "restart", "fishfeeder.service"])
+            sys.exit(0)
+
+        if not needs_bot:
             write_shared_state(update_status="up_to_date", last_updated=time.time(),
                                update_component=None, update_changes=[], update_type="")
     except Exception as e:
