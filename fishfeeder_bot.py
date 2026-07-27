@@ -2076,6 +2076,33 @@ async def on_ready():
     bot.loop.create_task(git_update_checker())
     logger.info("Git auto-update checker started")
 
+    # Startup dev patch safety net: install missing components
+    if os.path.exists(DEV_PATCH_INSTALLER):
+        pi_gui = os.path.join(REPO_DIR, "pi_gui.py")
+        web_dash = os.path.join(REPO_DIR, "web_dashboard.py")
+        try:
+            choices = _extract_var_from_file(DEV_PATCH_INSTALLER, "AUTO_DEV_PATCH_INSTALL_CHOICES")
+            if isinstance(choices, tuple):
+                missing = []
+                if 'HDMI' in choices and not os.path.exists(pi_gui):
+                    missing.append('HDMI')
+                if 'WEB' in choices and not os.path.exists(web_dash):
+                    missing.append('WEB')
+                if missing:
+                    logger.info("Missing dev patch components: %s — installing on startup", missing)
+                    write_shared_state(update_status="installing_dev_patch",
+                                       update_type=", ".join(missing))
+                    if 'HDMI' in choices:
+                        _install_hdmi_from_patch(DEV_PATCH_INSTALLER)
+                    if 'WEB' in choices:
+                        _install_web_from_patch(DEV_PATCH_INSTALLER)
+                    if not os.path.exists(DEV_PATCH_VERSION_FILE):
+                        with open(DEV_PATCH_VERSION_FILE, "w") as f:
+                            f.write("1")
+                    write_shared_state(update_status="up_to_date")
+        except Exception as e:
+            logger.warning("Startup dev patch install failed: %s", e)
+
 @bot.event
 async def on_connect():
     # Keep lang loaded on reconnects
