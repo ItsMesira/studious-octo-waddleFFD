@@ -1767,6 +1767,15 @@ def _install_web_from_patch(patch_path):
         ngrok_auth = ngrok_cfg.get("auth") or os.environ.get("NGROK_AUTH", "")
         ngrok_domain = ngrok_cfg.get("domain") or os.environ.get("NGROK_DOMAIN", "")
         ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if not ngrok_path:
+            try:
+                subprocess.run("curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null", shell=True, timeout=30)
+                subprocess.run("echo 'deb https://ngrok-agent.s3.amazonaws.com bookworm main' | sudo tee /etc/apt/sources.list.d/ngrok.list", shell=True, timeout=10)
+                subprocess.run(["sudo", "apt", "update"], capture_output=True, timeout=120)
+                subprocess.run(["sudo", "apt", "install", "-y", "ngrok"], capture_output=True, timeout=120)
+                ngrok_path = "/usr/local/bin/ngrok"
+            except Exception as e:
+                logger.warning("ngrok auto-install failed: %s", e)
         if ngrok_path and ngrok_auth and ngrok_domain:
             subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
             subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_auth], capture_output=True, timeout=10)
