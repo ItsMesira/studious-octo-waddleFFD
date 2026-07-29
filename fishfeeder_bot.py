@@ -1856,7 +1856,7 @@ async def process_git_update():
                     _install_web_from_patch(DEV_PATCH_INSTALLER)
 
             with open(DEV_PATCH_VERSION_FILE, "w") as f:
-                f.write("1")
+                f.write(_get_dev_patch_version() or "1")
             if not needs_bot:
                 _git("pull", GIT_REMOTE, GIT_BRANCH)
             write_shared_state(update_status="up_to_date", last_updated=time.time(),
@@ -2122,7 +2122,7 @@ async def on_ready():
                         _install_web_from_patch(DEV_PATCH_INSTALLER)
                     if not os.path.exists(DEV_PATCH_VERSION_FILE):
                         with open(DEV_PATCH_VERSION_FILE, "w") as f:
-                            f.write("1")
+                            f.write(_get_dev_patch_version() or "1")
                     write_shared_state(update_status="up_to_date")
         except Exception as e:
             logger.warning("Startup dev patch install failed: %s", e)
