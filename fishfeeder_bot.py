@@ -1705,6 +1705,16 @@ def set_auto_update_enabled(enabled):
     save_json_file(AUTO_UPDATE_FILE, {"enabled": enabled})
     write_shared_state(auto_update_enabled=enabled)
 
+def _get_dev_patch_version():
+    try:
+        with open(DEV_PATCH_INSTALLER) as f:
+            for line in f:
+                if "DEV PATCH VERSION" in line and "=" in line:
+                    return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
 def _extract_var_from_file(filepath, var_name):
     """Extract a string or tuple constant assigned to var_name using AST."""
     try:
@@ -3372,7 +3382,7 @@ async def update_status(ctx):
     if not installer_ver and os.path.exists(DEV_PATCH_VERSION_FILE):
         with open(DEV_PATCH_VERSION_FILE) as f:
             installer_ver = f.read().strip()
-    patch_line = f"\n**Patch Version:** v{installer_ver}" if installer_ver else ""
+    patch_line = f"\n**Dpatch:** v{installer_ver}" if installer_ver else ""
     await ctx.send(
         f"**Bot Version:** v{BOT_VERSION}{patch_line}\n"
         f"**Auto-Update:** {'✅ ON' if enabled else '❌ OFF'}\n"
