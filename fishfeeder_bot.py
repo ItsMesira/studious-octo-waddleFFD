@@ -815,7 +815,7 @@ ina = None
 ina_addr = None
 if INA219 is not None:
     try:
-        ina = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS, address=INA219_ADDR)
+        ina = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS, address=INA219_ADDR, busnum=1)
         ina.configure()
         have_ina = True
         ina_addr = INA219_ADDR
@@ -1043,7 +1043,7 @@ def ensure_ina_ready():
     # Try known addresses
     for addr in INA219_ADDRESSES:
         try:
-            tmp = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS, address=addr)
+            tmp = INA219(SHUNT_OHMS, MAX_EXPECTED_AMPS, address=addr, busnum=1)
             tmp.configure()
             ina = tmp
             have_ina = True
