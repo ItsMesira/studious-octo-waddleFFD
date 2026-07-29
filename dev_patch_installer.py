@@ -308,11 +308,11 @@ class FishFeederGUI(tk.Tk):
         self.footer = tk.Frame(self.main_container, bg="#1e293b", padx=20, pady=12)
         self.footer.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
-        self.bot_ver_lbl = tk.Label(self.footer, text="Bot v-", font=("Helvetica", 13, "bold"),
+        self.bot_ver_lbl = tk.Label(self.footer, text="MBPatch v-", font=("Helvetica", 13, "bold"),
                                     bg="#1e293b", fg="#94a3b8")
         self.bot_ver_lbl.pack(side=tk.LEFT, padx=(0, 20))
 
-        self.patch_ver_lbl = tk.Label(self.footer, text="Patch v-", font=("Helvetica", 13, "bold"),
+        self.patch_ver_lbl = tk.Label(self.footer, text="DPatch v.-", font=("Helvetica", 13, "bold"),
                                       bg="#1e293b", fg="#94a3b8")
         self.patch_ver_lbl.pack(side=tk.LEFT, padx=(0, 20))
 
@@ -427,8 +427,8 @@ class FishFeederGUI(tk.Tk):
         state = read_shared_state()
         bv = state.get("bot_version", "?")
         pv = state.get("installer_version")
-        self.bot_ver_lbl.config(text=f"Bot v{bv}")
-        self.patch_ver_lbl.config(text=f"Patch v{pv}" if pv else "Patch --")
+        self.bot_ver_lbl.config(text=f"MBPatch v{bv}")
+        self.patch_ver_lbl.config(text=f"DPatch v.{pv}" if pv else "DPatch --")
 
         s = state.get("update_status", "")
         enabled = state.get("auto_update_enabled", True)
