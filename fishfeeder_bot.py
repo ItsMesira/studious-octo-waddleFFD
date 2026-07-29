@@ -1847,6 +1847,8 @@ async def process_git_update():
 
             with open(DEV_PATCH_VERSION_FILE, "w") as f:
                 f.write("1")
+            if not needs_bot:
+                _git("pull", GIT_REMOTE, GIT_BRANCH)
             write_shared_state(update_status="up_to_date", last_updated=time.time(),
                                update_component=None, update_changes=[], update_type="")
     except Exception as e:
