@@ -2052,19 +2052,31 @@ async def on_ready():
         logger.info("Web dashboard not installed (web_dashboard.py not found)")
 
         # Auto-start ngrok tunnel if web dashboard installed & config exists
-    if os.path.exists(web_dash) and os.path.exists(NGROK_CONFIG_FILE):
-        try:
-            with open(NGROK_CONFIG_FILE) as f:
-                ngrok_cfg = json.load(f)
-            ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
-            if ngrok_path:
-                subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
-                subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_cfg["auth"]], capture_output=True, timeout=10)
-                subprocess.Popen([ngrok_path, "http", "--url=" + ngrok_cfg["domain"], "5000"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                logger.info("Ngrok tunnel started: %s", ngrok_cfg["domain"])
-        except Exception as e:
-            logger.warning("Ngrok auto-start: %s", e)
+    if os.path.exists(web_dash):
+        ngrok_auth = os.environ.get("NGROK_AUTH", "")
+        ngrok_domain = os.environ.get("NGROK_DOMAIN", "")
+        if os.path.exists(NGROK_CONFIG_FILE):
+            try:
+                with open(NGROK_CONFIG_FILE) as f:
+                    ngrok_cfg = json.load(f)
+                ngrok_auth = ngrok_cfg.get("auth", ngrok_auth)
+                ngrok_domain = ngrok_cfg.get("domain", ngrok_domain)
+            except Exception:
+                pass
+        if ngrok_auth and ngrok_domain:
+            try:
+                if not os.path.exists(NGROK_CONFIG_FILE):
+                    with open(NGROK_CONFIG_FILE, "w") as f:
+                        json.dump({"auth": ngrok_auth, "domain": ngrok_domain}, f)
+                ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
+                if ngrok_path:
+                    subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
+                    subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_auth], capture_output=True, timeout=10)
+                    subprocess.Popen([ngrok_path, "http", "--url=" + ngrok_domain, "5000"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    logger.info("Ngrok tunnel started: %s", ngrok_domain)
+            except Exception as e:
+                logger.warning("Ngrok auto-start: %s", e)
 
     # Start git auto-update checker
     write_shared_state(bot_version=BOT_VERSION, update_status="up_to_date")
