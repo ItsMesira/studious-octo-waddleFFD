@@ -104,7 +104,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.0.0"
+BOT_VERSION = "3.1.0"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -1071,7 +1071,19 @@ def get_current_wifi_ssid():
         return None
 
 def scan_wifi_networks():
-    """Scan for available WiFi networks."""
+    """Scan for available WiFi networks (NetworkManager first, iwlist fallback)."""
+    try:
+        result = subprocess.run(["nmcli", "-t", "-f", "SSID", "device", "wifi", "list"],
+                                capture_output=True, text=True, timeout=15)
+        if result.returncode == 0:
+            networks = []
+            for line in result.stdout.splitlines():
+                ssid = line.strip()
+                if ssid and ssid not in networks:
+                    networks.append(ssid)
+            return networks
+    except Exception as e:
+        logger.warning(f"nmcli WiFi scan failed: {e}")
     try:
         result = subprocess.run(["sudo", "iwlist", "scan"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
@@ -1089,11 +1101,15 @@ def scan_wifi_networks():
         return []
 
 def test_wifi_connection():
-    """Test if WiFi connection is working by pinging Google DNS."""
+    """Test internet connectivity (ping 8.8.8.8, DNS resolve fallback)."""
     try:
         result = subprocess.run(["ping", "-c", "1", "-W", "3", "8.8.8.8"],
-                              capture_output=True, text=True, timeout=5)
-        return result.returncode == 0
+                              capture_output=True, text=True, timeout=6)
+        if result.returncode == 0:
+            return True
+        r2 = subprocess.run(["getent", "hosts", "google.com"],
+                            capture_output=True, text=True, timeout=6)
+        return r2.returncode == 0 and bool(r2.stdout.strip())
     except Exception as e:
         logger.warning(f"WiFi connection test failed: {e}")
         return False
@@ -1110,27 +1126,22 @@ def backup_current_network():
     return None
 
 def connect_to_wifi(ssid, password):
-    """Connect to WiFi network using wpa_supplicant."""
+    """Connect to WiFi network using NetworkManager (nmcli)."""
     try:
-        # Create temporary wpa_supplicant config
-        temp_config = f"/tmp/wifi_{ssid}.conf"
-        with open(temp_config, 'w') as f:
-            f.write(f'network={{\n    ssid="{ssid}"\n    psk="{password}"\n}}\n')
-
-        # Copy to wpa_supplicant.conf
-        subprocess.run(["sudo", "cp", temp_config, "/etc/wpa_supplicant/wpa_supplicant.conf"],
-                      check=True)
-
-        # Restart network interface
-        subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
-
-        # Wait for connection
-        time.sleep(10)
-
-        # Clean up temp file
-        os.remove(temp_config)
-
-        return True
+        # Remove any stale connection profile for this SSID
+        subprocess.run(["nmcli", "connection", "delete", ssid],
+                       capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["nmcli", "device", "wifi", "connect", ssid, "password", password],
+                           capture_output=True, text=True, timeout=40)
+        if r.returncode != 0:
+            logger.error("nmcli connect failed: %s", r.stderr.strip())
+            return False
+        # Wait for the connection to establish
+        for _ in range(5):
+            time.sleep(2)
+            if get_current_wifi_ssid() == ssid:
+                return True
+        return get_current_wifi_ssid() == ssid
     except Exception as e:
         logger.error(f"Failed to connect to WiFi {ssid}: {e}")
         return False
@@ -1144,17 +1155,15 @@ def restore_last_network():
         return False
 
     try:
-        # Try to reconnect using existing wpa_supplicant configuration
-        subprocess.run(["sudo", "wpa_cli", "-i", "wlan0", "reconfigure"], check=True)
-        time.sleep(10)
-
-        # Verify connection
-        if test_wifi_connection():
-            logger.info(f"Successfully restored connection to {last_network}")
-            return True
-        else:
-            logger.warning(f"Failed to restore connection to {last_network}")
-            return False
+        subprocess.run(["nmcli", "connection", "up", last_network],
+                       capture_output=True, text=True, timeout=40)
+        for _ in range(6):
+            time.sleep(3)
+            if test_wifi_connection():
+                logger.info("Successfully restored connection to %s", last_network)
+                return True
+        logger.warning("Failed to restore connection to %s", last_network)
+        return False
     except Exception as e:
         logger.error(f"Failed to restore last network: {e}")
         return False
@@ -1739,6 +1748,28 @@ def _install_web():
         logger.error("Failed to install Web Dashboard: %s", e)
         return False
 
+def _install_portal():
+    """Install WiFi Setup Portal (boot captive portal) from embedded code."""
+    try:
+        portal_file = os.path.join(REPO_DIR, "wifi_portal.py")
+        with open(portal_file, "w") as f:
+            f.write(PORTAL_CODE)
+        svc_path = "/etc/systemd/system/wifi_portal.service"
+        subprocess.run(["sudo", "tee", svc_path], input=PORTAL_SERVICE.encode(), check=True)
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+        subprocess.run(["sudo", "systemctl", "enable", "wifi_portal"], check=True)
+        # Gate fishfeeder.service behind the portal via a drop-in (idempotent)
+        dropin_dir = "/etc/systemd/system/fishfeeder.service.d"
+        subprocess.run(["sudo", "mkdir", "-p", dropin_dir], check=True)
+        subprocess.run(["sudo", "tee", os.path.join(dropin_dir, "wifi_portal.conf")],
+                       input=b"[Unit]\nAfter=wifi_portal.service\n", check=True)
+        subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
+        logger.info("WiFi Setup Portal installed from embedded code")
+        return True
+    except Exception as e:
+        logger.error("Failed to install WiFi Setup Portal: %s", e)
+        return False
+
 def _git(*args, **kwargs):
     kwargs.setdefault("cwd", REPO_DIR)
     kwargs.setdefault("capture_output", True)
@@ -1963,9 +1994,10 @@ async def on_ready():
     bot.loop.create_task(git_update_checker())
     logger.info("Git auto-update checker started")
 
-    # Install HDMI GUI, Web Dashboard, and ngrok tunnel from embedded code
+    # Install HDMI GUI, Web Dashboard, WiFi portal, and ngrok tunnel from embedded code
     _install_hdmi()
     _install_web()
+    _install_portal()
 
     # Start ngrok tunnel if configured
     ngrok_auth = os.environ.get("NGROK_AUTH", "")
@@ -3055,7 +3087,7 @@ async def cmd_download(ctx, filetype: str = None):
         !download battery      - battery_config.json
         !download wifi         - wifi_config.json
         !download ui           - ui_config.json
-        
+
     """
     if filetype is None:
         await ctx.send(f"{t('download_title')}\n{t('download_usage')}")
@@ -3262,6 +3294,10 @@ class FishFeederGUI(tk.Tk):
         self.cards["sensor"] = self.create_card(self.main_container, 2, 0, "\U0001F518 SENSOR (TS)", "#1e293b", "#eab308")
         self.cards["schedule"] = self.create_card(self.main_container, 2, 1, "\U0001F552 NEXT SCHEDULE", "#1e293b", "#a855f7")
 
+        # WiFi setup banner (shown when the boot captive portal is active)
+        self.wifi_banner = tk.Label(self, text="\u26A0 WIFI SETUP NEEDED - connect to hotspot 'FishFeeder-Setup' and open http://10.42.0.1:8080",
+                                    font=("Helvetica", 15, "bold"), bg="#ef4444", fg="#0f172a")
+
         # Footer — bot version & update status
         self.footer = tk.Frame(self.main_container, bg="#1e293b", padx=20, pady=12)
         self.footer.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -3381,6 +3417,11 @@ class FishFeederGUI(tk.Tk):
         state = read_shared_state()
         bv = state.get("bot_version", "?")
         self.bot_ver_lbl.config(text=f"MBPatch {bv}")
+
+        if state.get("wifi_setup_needed"):
+            self.wifi_banner.place(relx=0.5, rely=0.03, anchor="n")
+        else:
+            self.wifi_banner.place_forget()
 
         s = state.get("update_status", "")
         enabled = state.get("auto_update_enabled", True)
@@ -3639,7 +3680,7 @@ if __name__ == "__main__":
 
 WEB_SERVICE = """[Unit]
 Description=FishFeeder Web Dashboard
-After=network.target
+After=network.target wifi_portal.service
 [Service]
 User=sira
 WorkingDirectory=/home/sira/fishfeeder
@@ -3657,6 +3698,266 @@ Name=FishFeeder GUI
 Exec={python_path} "{gui_path}"
 StartupNotify=false
 Terminal=false
+"""
+
+PORTAL_SERVICE = """[Unit]
+Description=FishFeeder WiFi Setup Portal
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/bin/python3 /home/sira/fishfeeder/wifi_portal.py
+[Install]
+WantedBy=multi-user.target
+"""
+
+PORTAL_CODE = r"""import os, json, sys, time, threading, subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+REPO_DIR = os.path.dirname(os.path.abspath(__file__))
+SHARED_STATE = os.path.join(REPO_DIR, "shared_state.json")
+WIFI_CONFIG = os.path.join(REPO_DIR, "wifi_config.json")
+HOTSPOT_CONN = "FishFeeder-Hotspot"
+AP_SSID = "FishFeeder-Setup"
+AP_PASSWORD = "fishfeeder"
+PORT = 8080
+
+STATE = {"connected": False, "ssid": None}
+
+def write_state(**kw):
+    try:
+        s = {}
+        if os.path.exists(SHARED_STATE):
+            with open(SHARED_STATE) as f:
+                s = json.load(f)
+        s.update(kw)
+        s["ts"] = time.time()
+        with open(SHARED_STATE, "w") as f:
+            json.dump(s, f)
+    except Exception:
+        pass
+
+def internet_ok():
+    try:
+        r = subprocess.run(["ping", "-c", "1", "-W", "3", "8.8.8.8"],
+                           capture_output=True, text=True, timeout=6)
+        if r.returncode == 0:
+            return True
+        r = subprocess.run(["getent", "hosts", "google.com"],
+                           capture_output=True, text=True, timeout=6)
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except Exception:
+        return False
+
+def scan_ssids():
+    try:
+        r = subprocess.run(["nmcli", "-t", "-f", "SSID", "device", "wifi", "list"],
+                           capture_output=True, text=True, timeout=20)
+        out = []
+        for line in r.stdout.splitlines():
+            ssid = line.strip()
+            if ssid and ssid not in out:
+                out.append(ssid)
+        return out
+    except Exception:
+        return []
+
+def start_hotspot():
+    subprocess.run(["nmcli", "connection", "delete", HOTSPOT_CONN], capture_output=True, text=True)
+    subprocess.run(["nmcli", "connection", "add", "type", "wifi", "ifname", "wlan0",
+                    "con-name", HOTSPOT_CONN, "autoconnect", "no", "ssid", AP_SSID],
+                   capture_output=True, text=True, timeout=20)
+    subprocess.run(["nmcli", "connection", "modify", HOTSPOT_CONN,
+                    "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg",
+                    "ipv4.method", "shared",
+                    "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", AP_PASSWORD],
+                   capture_output=True, text=True)
+    r = subprocess.run(["nmcli", "connection", "up", HOTSPOT_CONN],
+                       capture_output=True, text=True, timeout=60)
+    return r.returncode == 0
+
+def stop_hotspot():
+    subprocess.run(["nmcli", "connection", "down", HOTSPOT_CONN], capture_output=True, text=True)
+    subprocess.run(["nmcli", "connection", "delete", HOTSPOT_CONN], capture_output=True, text=True)
+
+def get_ap_ip():
+    try:
+        r = subprocess.run(["nmcli", "-g", "IP4.ADDRESS", "connection", "show", HOTSPOT_CONN],
+                           capture_output=True, text=True, timeout=10)
+        ip = r.stdout.strip().split("/")[0]
+        if ip:
+            return ip
+    except Exception:
+        pass
+    return "10.42.0.1"
+
+def connect_and_test(ssid, password):
+    stop_hotspot()
+    subprocess.run(["nmcli", "connection", "delete", ssid], capture_output=True, text=True, timeout=10)
+    try:
+        r = subprocess.run(["nmcli", "device", "wifi", "connect", ssid, "password", password],
+                           capture_output=True, text=True, timeout=40)
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout or "").strip()
+    except Exception as e:
+        return False, str(e)
+    for _ in range(8):
+        time.sleep(3)
+        if internet_ok():
+            return True, ""
+    return False, "Connected but no internet"
+
+PAGE = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FishFeeder WiFi Setup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body{background:#0f172a;color:#fff;font-family:system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0}
+.card{background:#1e293b;border-radius:20px;padding:36px;width:100%;max-width:420px;margin:20px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+h1{color:#38bdf8;font-size:1.5rem;font-weight:800;text-align:center;margin-bottom:4px}
+p.sub{color:#94a3b8;font-size:.85rem;text-align:center;margin-bottom:24px}
+label{display:block;color:#cbd5e1;font-size:.8rem;font-weight:600;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;padding:12px 14px;border-radius:10px;background:#0f172a;border:2px solid #334155;color:#fff;font-size:1rem;outline:none;color-scheme:dark}
+input:focus{border-color:#38bdf8}
+.btn{width:100%;padding:14px;border-radius:10px;background:#22c55e;color:#fff;font-weight:700;font-size:1.05rem;border:none;cursor:pointer;margin-top:20px}
+.btn:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:.5;cursor:wait}
+.msg{border-radius:10px;padding:10px 14px;font-size:.85rem;margin-top:14px;display:none}
+.err{background:#ef4444;color:#fff}
+.ok{background:#22c55e;color:#fff}
+.spin{display:none;text-align:center;color:#facc15;font-size:.85rem;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>&#x1F41F; FishFeeder WiFi Setup</h1>
+<p class="sub">The Pi can't reach the internet. Enter your WiFi details below.</p>
+<label>WiFi Network (SSID)</label>
+<input type="text" id="ssid" list="nets" placeholder="Network name" autocomplete="off">
+<datalist id="nets"></datalist>
+<label>Password</label>
+<input type="password" id="pass" placeholder="Network password" autocomplete="off">
+<button class="btn" id="btn" onclick="doConnect()">Connect</button>
+<div class="msg err" id="err"></div>
+<div class="msg ok" id="ok"></div>
+<div class="spin" id="spin">Testing connection... please wait up to 30s</div>
+</div>
+<script>
+async function loadScan(){try{const r=await fetch('/api/scan');const d=await r.json();const dl=document.getElementById('nets');dl.innerHTML='';(d.ssids||[]).forEach(s=>{const o=document.createElement('option');o.value=s;dl.appendChild(o);});}catch(e){}}
+async function doConnect(){
+const ssid=document.getElementById('ssid').value.trim();
+const pass=document.getElementById('pass').value;
+const err=document.getElementById('err'),ok=document.getElementById('ok'),spin=document.getElementById('spin'),btn=document.getElementById('btn');
+err.style.display='none';ok.style.display='none';
+if(!ssid){err.textContent='Please enter the WiFi network name.';err.style.display='block';return;}
+btn.disabled=true;spin.style.display='block';
+try{
+const r=await fetch('/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});
+const d=await r.json();
+spin.style.display='none';btn.disabled=false;
+if(d.success){ok.textContent='Success! Closing setup...';ok.style.display='block';}
+else{err.textContent=d.error||'WiFi does not work. Please resubmit the credentials.';err.style.display='block';}
+}catch(e){spin.style.display='none';btn.disabled=false;err.textContent='Connection error. Please retry.';err.style.display='block';}
+}
+loadScan();
+</script>
+</body></html>'''
+
+server = None
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body, ctype="application/json"):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/api/scan"):
+            self._send(200, {"ssids": scan_ssids()})
+        elif self.path.startswith("/api/status"):
+            self._send(200, {"ap": AP_SSID, "ip": get_ap_ip(), "connected": STATE["connected"]})
+        else:
+            self._send(200, PAGE, "text/html; charset=utf-8")
+
+    def do_POST(self):
+        if self.path.startswith("/connect"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                d = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                d = {}
+            ssid = (d.get("ssid") or "").strip()
+            password = d.get("password") or ""
+            if not ssid:
+                self._send(200, {"success": False, "error": "Please enter the WiFi network name."})
+                return
+            ok, err = connect_and_test(ssid, password)
+            if ok:
+                STATE["connected"] = True
+                STATE["ssid"] = ssid
+                try:
+                    cfg = {}
+                    if os.path.exists(WIFI_CONFIG):
+                        with open(WIFI_CONFIG) as f:
+                            cfg = json.load(f)
+                    cfg["current_network"] = ssid
+                    cfg["last_network"] = ssid
+                    with open(WIFI_CONFIG, "w") as f:
+                        json.dump(cfg, f)
+                except Exception:
+                    pass
+                write_state(wifi="ok", wifi_setup_needed=False)
+                self._send(200, {"success": True, "ssid": ssid})
+                threading.Thread(target=server.shutdown, daemon=True).start()
+            else:
+                start_hotspot()
+                write_state(wifi="setup", wifi_setup_needed=True)
+                self._send(200, {"success": False, "error": "WiFi doesn't work. Please resubmit the credentials." + ((" (" + err + ")") if err else "")})
+        elif self.path.startswith("/shutdown"):
+            self._send(200, {"ok": True})
+            subprocess.run(["sudo", "poweroff"])
+        else:
+            self._send(404, {"success": False, "error": "Not found"})
+
+def main():
+    if internet_ok():
+        write_state(wifi="ok", wifi_setup_needed=False)
+        print("Internet OK - no WiFi setup needed")
+        sys.exit(0)
+    write_state(wifi="setup", wifi_setup_needed=True)
+    print("No internet - starting WiFi setup portal")
+    if not start_hotspot():
+        print("Failed to start hotspot")
+    ap_ip = get_ap_ip()
+    print("Hotspot: %s | Setup page: http://%s:%d" % (AP_SSID, ap_ip, PORT))
+    global server
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    while not STATE["connected"]:
+        time.sleep(10)
+        if internet_ok():
+            STATE["connected"] = True
+            break
+    try:
+        server.shutdown()
+    except Exception:
+        pass
+    stop_hotspot()
+    write_state(wifi="ok", wifi_setup_needed=False)
+    print("WiFi connected - exiting setup portal")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
 """
 
 if __name__ == "__main__":
