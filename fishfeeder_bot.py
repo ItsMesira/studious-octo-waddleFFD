@@ -105,7 +105,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.3.1"
+BOT_VERSION = "3.3.2"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -3687,7 +3687,7 @@ main .panel:nth-of-type(4){animation-delay:.36s}
 .gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0 2px}
 .gauge-box{position:relative;width:212px;height:212px}
 .gauge{width:100%;height:100%;transform:rotate(135deg)}
-.gauge-track{fill:none;stroke:rgba(127,163,178,.14);stroke-width:11;stroke-linecap:round}
+.gauge-track{fill:none;stroke:rgba(127,163,178,.14);stroke-width:11;stroke-linecap:round;stroke-dasharray:395.84 527.79}
 .gauge-arc{fill:none;stroke:var(--aqua);stroke-width:11;stroke-linecap:round;stroke-dasharray:395.84 527.79;stroke-dashoffset:395.84;transition:stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1),stroke .6s;filter:drop-shadow(0 0 8px rgba(55,210,187,.45))}
 .gauge-arc.warn{stroke:var(--amber);filter:drop-shadow(0 0 8px rgba(240,160,75,.45))}
 .gauge-arc.low{stroke:var(--red);animation:arcpulse 1.4s ease-in-out infinite}
