@@ -84,9 +84,9 @@ FEED_DURATION_MAX = 30      # seconds cap
 BATTERY_MIN_VOLTAGE = 5.0
 BATTERY_MAX_CURRENT_MA = 1200
 LOW_BATTERY_WARNING_THRESHOLD = 5.3  # Warn user below this voltage
-BATTERY_FULL_VOLTAGE = 6.5          # Voltage considered 100%
+BATTERY_FULL_VOLTAGE = 6.4          # Voltage considered 100%
 BATTERY_EMPTY_VOLTAGE = 5.0         # Voltage considered 0% (below = blackout)
-BATTERY_CONFIG_VERSION = 2          # Bump to force-reset stale config files
+BATTERY_CONFIG_VERSION = 3          # Bump to force-reset stale config files
 
 # INA219 config
 SHUNT_OHMS = 0.1
@@ -105,7 +105,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.2.2"
+BOT_VERSION = "3.3.0"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -262,7 +262,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **Battery Configuration**",
         "bat_conf_pct_on": "✅ **Percentage display is ENABLED**",
         "bat_conf_pct_off": "⚠️ **Percentage display is DISABLED**\n💡 **To enable:** Set `full` and `empty` voltages.",
-        "bat_conf_usage": "❌ Please provide a value. Example: `!battery_config full 6.5`",
+        "bat_conf_usage": "❌ Please provide a value. Example: `!battery_config full 6.4`",
         "bat_conf_invalid_v": "❌ Invalid voltage. Must be between 0-15V",
         "bat_conf_updated": "✅ {setting} updated: {old} → {new}",
         "bat_conf_unknown": "❌ Unknown setting `{setting}`. Valid: `min`, `warning`, `max_current`, `full`, `empty`",
@@ -444,7 +444,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **การตั้งค่าแบตเตอรี่**",
         "bat_conf_pct_on": "✅ **การแสดงเปอร์เซ็นต์เปิดใช้งานอยู่**",
         "bat_conf_pct_off": "⚠️ **การแสดงเปอร์เซ็นต์ปิดอยู่**\n💡 **วิธีเปิด:** ตั้งค่าแรงดัน `full` และ `empty`",
-        "bat_conf_usage": "❌ โปรดระบุค่า ตัวอย่าง: `!battery_config full 6.5`",
+        "bat_conf_usage": "❌ โปรดระบุค่า ตัวอย่าง: `!battery_config full 6.4`",
         "bat_conf_invalid_v": "❌ แรงดันไฟไม่ถูกต้อง (0-15V)",
         "bat_conf_updated": "✅ {setting} อัปเดต: {old} → {new}",
         "bat_conf_unknown": "❌ ไม่รู้จักการตั้งค่า `{setting}`",
@@ -626,7 +626,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **电池配置**",
         "bat_conf_pct_on": "✅ **百分比显示已启用**",
         "bat_conf_pct_off": "⚠️ **百分比显示已禁用**\n💡 **启用:** 设置 `full` 和 `empty` 电压。",
-        "bat_conf_usage": "❌ 请提供一个值。例如: `!battery_config full 6.5`",
+        "bat_conf_usage": "❌ 请提供一个值。例如: `!battery_config full 6.4`",
         "bat_conf_invalid_v": "❌ 无效电压。必须在 0-15V 之间",
         "bat_conf_updated": "✅ {setting} 已更新: {old} → {new}",
         "bat_conf_unknown": "❌ 未知设置 `{setting}`",
@@ -1673,7 +1673,7 @@ async def notify_log_channel(message: str):
             logger.warning("notify_log_channel failed: %s", e)
 
 async def web_command_poller():
-    """Poll command.json and execute feed/reverse/stop commands from the web dashboard."""
+    """Poll command.json and execute feed/reverse/stop/schedule commands from the web dashboard."""
     while True:
         try:
             if os.path.exists(COMMAND_FILE):
@@ -1697,6 +1697,30 @@ async def web_command_poller():
                 elif action == "kill":
                     stop_motor()
                     await notify_log_channel("Web: emergency kill")
+                elif action == "schedule_add":
+                    h = int(cmd.get("hour", 0))
+                    m = int(cmd.get("minute", 0))
+                    d = int(cmd.get("duration", FEED_DURATION_DEFAULT))
+                    if 0 <= h <= 23 and 0 <= m <= 59:
+                        add_schedule_job(h, m, max(1, min(d, FEED_DURATION_MAX)))
+                        await notify_log_channel(f"Web: schedule added {h:02d}:{m:02d} ({max(1, min(d, FEED_DURATION_MAX))}s)")
+                    else:
+                        await notify_log_channel("Web: schedule add rejected - invalid time")
+                elif action == "schedule_remove":
+                    h = int(cmd.get("hour", 0))
+                    m = int(cmd.get("minute", 0))
+                    job_id = f"feed_{h:02d}{m:02d}"
+                    try:
+                        scheduler.remove_job(job_id)
+                    except Exception:
+                        pass
+                    schedules = load_json_file(SCHEDULE_FILE, [])
+                    schedules = [s for s in schedules if s.get("id") != job_id]
+                    save_json_file(SCHEDULE_FILE, schedules)
+                    await notify_log_channel(f"Web: schedule removed {h:02d}:{m:02d}")
+                elif action == "schedule_clear":
+                    clear_feed_jobs()
+                    await notify_log_channel("Web: all schedules cleared")
                 cmd["executed"] = True
                 with open(COMMAND_FILE, "w") as f:
                     json.dump(cmd, f)
@@ -2001,6 +2025,20 @@ def add_schedule_job(hour: int, minute: int, duration: int):
     save_json_file(SCHEDULE_FILE, schedules)
     return job_id
 
+def clear_feed_jobs():
+    """Remove all scheduled feed jobs (but keep other scheduler jobs like battery_poll)."""
+    try:
+        jobs = scheduler.get_jobs()
+        for j in jobs:
+            if str(j.id).startswith("feed_"):
+                try:
+                    scheduler.remove_job(j.id)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    save_json_file(SCHEDULE_FILE, [])
+
 # ----------------- Initialization -----------------
 def initialize_data():
     """Load all config and state files."""
@@ -2293,8 +2331,7 @@ async def cmd_schedule_list(ctx):
 async def cmd_schedule_remove(ctx, arg1: str, arg2: str = None):
     # Handle "all" case
     if arg1.lower() == "all":
-        scheduler.remove_all_jobs()
-        save_json_file(SCHEDULE_FILE, [])
+        clear_feed_jobs()
         await ctx.send(t("sched_cleared_all"))
         await notify_log_channel(t("sched_cleared_all"))
         return
@@ -2325,8 +2362,7 @@ async def cmd_schedule_remove(ctx, arg1: str, arg2: str = None):
 @bot.command(name="schedule_clear")
 @owner_check()
 async def cmd_schedule_clear(ctx):
-    scheduler.remove_all_jobs()
-    save_json_file(SCHEDULE_FILE, [])
+    clear_feed_jobs()
     await ctx.send(t("sched_cleared_all"))
     await notify_log_channel(t("sched_cleared_all"))
 
@@ -3537,7 +3573,7 @@ T = {
 "en": {
   "title": "FishFeeder Station", "station": "Samutprakan · Station 01",
   "power": "Power", "motion": "Motion", "schedule": "Schedule", "console": "Console",
-  "voltage": "Voltage", "current": "Current", "motor": "Motor", "sensor": "Sensor",
+  "motor": "Motor", "sensor": "Sensor",
   "next": "Next feed", "last": "Last feed", "feeds": "feed times",
   "today": "Today", "tomorrow": "Tomorrow",
   "duration": "Duration (s)", "feed": "Feed", "reverse": "Reverse",
@@ -3546,12 +3582,16 @@ T = {
   "blocked": "Blocked", "clear": "Clear", "no_sensor": "No sensor",
   "sending": "Sending", "sent": "Sent", "failed": "Send failed",
   "stale": "Telemetry stale", "ok": "OK", "low": "Low", "crit": "Critical",
-  "wifi_banner": "WiFi setup needed - connect to the hotspot"
+  "wifi_banner": "WiFi setup needed - connect to the hotspot",
+  "all_feeds": "All feed times", "add_time": "Add time", "clear_all": "Clear all",
+  "sched_empty": "No feed times set", "sched_added": "Time added",
+  "sched_removed": "Time removed", "sched_cleared": "All cleared",
+  "confirm_clear": "Clear all feed times?"
 },
 "th": {
   "title": "สถานีให้อาหารปลา", "station": "สมุทรปราการ · สถานี 01",
   "power": "พลังงาน", "motion": "การทำงาน", "schedule": "ตาราง", "console": "ควบคุม",
-  "voltage": "แรงดัน", "current": "กระแส", "motor": "มอเตอร์", "sensor": "เซนเซอร์",
+  "motor": "มอเตอร์", "sensor": "เซนเซอร์",
   "next": "ให้อาหารครั้งถัดไป", "last": "ครั้งล่าสุด", "feeds": "ครั้ง",
   "today": "วันนี้", "tomorrow": "พรุ่งนี้",
   "duration": "ระยะเวลา (วินาที)", "feed": "ให้อาหาร", "reverse": "หมุนย้อน",
@@ -3560,12 +3600,16 @@ T = {
   "blocked": "ติดขัด", "clear": "ปกติ", "no_sensor": "ไม่มีเซนเซอร์",
   "sending": "กำลังส่ง", "sent": "ส่งแล้ว", "failed": "ส่งไม่สำเร็จ",
   "stale": "ข้อมูลล้าสมัย", "ok": "ปกติ", "low": "ต่ำ", "crit": "วิกฤต",
-  "wifi_banner": "ต้องตั้งค่า WiFi - เชื่อมต่อฮอตสปอต"
+  "wifi_banner": "ต้องตั้งค่า WiFi - เชื่อมต่อฮอตสปอต",
+  "all_feeds": "เวลาอาหารทั้งหมด", "add_time": "เพิ่มเวลา", "clear_all": "ล้างทั้งหมด",
+  "sched_empty": "ยังไม่ตั้งเวลาอาหาร", "sched_added": "เพิ่มเวลาแล้ว",
+  "sched_removed": "ลบเวลาแล้ว", "sched_cleared": "ล้างทั้งหมดแล้ว",
+  "confirm_clear": "ล้างเวลาอาหารทั้งหมด?"
 },
 "zh": {
   "title": "喂食站", "station": "北榄府 · 01号站",
   "power": "电源", "motion": "运转", "schedule": "计划", "console": "控制",
-  "voltage": "电压", "current": "电流", "motor": "电机", "sensor": "传感器",
+  "motor": "电机", "sensor": "传感器",
   "next": "下次喂食", "last": "上次喂食", "feeds": "次",
   "today": "今天", "tomorrow": "明天",
   "duration": "时长（秒）", "feed": "喂食", "reverse": "反转",
@@ -3574,7 +3618,11 @@ T = {
   "blocked": "卡住", "clear": "正常", "no_sensor": "无传感器",
   "sending": "发送中", "sent": "已发送", "failed": "发送失败",
   "stale": "数据延迟", "ok": "正常", "low": "偏低", "crit": "危急",
-  "wifi_banner": "需要设置 WiFi - 请连接热点"
+  "wifi_banner": "需要设置 WiFi - 请连接热点",
+  "all_feeds": "所有喂食时间", "add_time": "添加时间", "clear_all": "全部清除",
+  "sched_empty": "未设置喂食时间", "sched_added": "已添加",
+  "sched_removed": "已删除", "sched_cleared": "已全部清除",
+  "confirm_clear": "清除所有喂食时间？"
 }
 }
 
@@ -3595,13 +3643,21 @@ HTML = '''<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 html{color-scheme:dark}
 body{
-  background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;
+  background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;overflow-x:hidden;
   background-image:radial-gradient(1100px 500px at 85% -10%,rgba(55,210,187,.07),transparent 60%),
                    radial-gradient(900px 500px at -10% 110%,rgba(90,169,230,.05),transparent 60%);
 }
 :focus-visible{outline:2px solid var(--aqua);outline-offset:2px}
-.shell{max-width:1060px;margin:0 auto;padding:28px 20px 44px}
-.mast{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:16px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.bg-blob{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:0}
+.bg-blob.b1{width:480px;height:480px;top:-160px;right:-120px;background:rgba(55,210,187,.10);animation:blob1 26s ease-in-out infinite alternate}
+.bg-blob.b2{width:420px;height:420px;bottom:-140px;left:-100px;background:rgba(90,169,230,.08);animation:blob2 32s ease-in-out infinite alternate}
+@keyframes blob1{0%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,-40px) scale(1.15)}100%{transform:translate(-40px,30px) scale(1.05)}}
+@keyframes blob2{0%{transform:translate(0,0) scale(1.05)}50%{transform:translate(-70px,50px) scale(1.2)}100%{transform:translate(50px,-30px) scale(1)}}
+.shell{max-width:1060px;margin:0 auto;padding:28px 20px 44px;position:relative;z-index:1}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.mast{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:16px;padding-bottom:22px;position:relative;animation:rise .55s cubic-bezier(.22,1,.36,1) backwards}
+.mast::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,transparent,rgba(55,210,187,.55),transparent);background-size:200% 100%;animation:linemove 6s linear infinite}
+@keyframes linemove{0%{background-position:0% 50%}100%{background-position:200% 50%}}
 .brand{display:flex;gap:14px;align-items:center}
 .beacon{width:10px;height:10px;border-radius:50%;background:var(--aqua);flex:none;animation:pulse 2.4s infinite}
 .beacon.stale{background:var(--amber);animation:none}
@@ -3614,13 +3670,20 @@ h1{font-size:1.05rem;letter-spacing:.34em;font-weight:600}
 .lbtn{background:transparent;border:1px solid var(--line);color:var(--dim);font-family:var(--mono);font-size:.72rem;padding:5px 12px;border-radius:999px;cursor:pointer;letter-spacing:.08em;transition:all .15s}
 .lbtn:hover{color:var(--ink);border-color:var(--faint)}
 .lbtn.active{background:rgba(55,210,187,.16);border-color:var(--aqua);color:var(--aqua)}
-.banner{margin-top:18px;background:rgba(240,160,75,.12);border:1px solid rgba(240,160,75,.35);color:var(--amber);padding:10px 16px;border-radius:10px;font-size:.85rem}
+.banner{margin-top:18px;background:rgba(240,160,75,.12);border:1px solid rgba(240,160,75,.35);color:var(--amber);padding:10px 16px;border-radius:10px;font-size:.85rem;animation:rise .5s .1s cubic-bezier(.22,1,.36,1) backwards}
 main{display:grid;gap:16px;margin-top:22px}
 @media(min-width:860px){main{grid-template-columns:1.05fr 1fr}.tank-panel{grid-row:span 2}}
-.panel{background:linear-gradient(180deg,var(--panel),rgba(11,31,43,.55));border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.panel{background:linear-gradient(180deg,var(--panel),rgba(11,31,43,.55));border:1px solid var(--line);border-radius:14px;padding:18px 20px;transition:border-color .3s;animation:rise .6s cubic-bezier(.22,1,.36,1) backwards}
+.panel:hover{border-color:rgba(55,210,187,.28)}
+main .panel:nth-of-type(1){animation-delay:.12s}
+main .panel:nth-of-type(2){animation-delay:.2s}
+main .panel:nth-of-type(3){animation-delay:.28s}
+main .panel:nth-of-type(4){animation-delay:.36s}
 .panel-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
 .kicker{font-size:.68rem;letter-spacing:.32em;text-transform:uppercase;color:var(--faint);font-weight:600}
 .sweep{font-family:var(--mono);font-size:.7rem;color:var(--faint)}
+.sweep.stale{animation:blink 1s step-end infinite}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.35}}
 .tank-wrap{display:flex;gap:24px;align-items:stretch;justify-content:center;padding:4px 0 2px}
 .tank{position:relative;width:92px;height:208px;border:1px solid var(--line);border-radius:12px;background:rgba(6,19,28,.65);overflow:hidden}
 .ticks span{position:absolute;left:0;right:0;border-top:1px dashed rgba(127,163,178,.22)}
@@ -3628,12 +3691,16 @@ main{display:grid;gap:16px;margin-top:22px}
 .water{position:absolute;left:0;right:0;bottom:0;height:0%;background:linear-gradient(180deg,rgba(55,210,187,.95),rgba(23,120,110,.95));transition:height 1.1s cubic-bezier(.22,1,.36,1)}
 .water.warn{background:linear-gradient(180deg,rgba(240,160,75,.95),rgba(160,95,35,.95))}
 .water.low{background:linear-gradient(180deg,rgba(225,85,84,.95),rgba(150,45,45,.95))}
+.water::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.18) 45%,transparent 60%);animation:shimmer 4.5s ease-in-out infinite}
+@keyframes shimmer{0%{transform:translateX(-60%)}100%{transform:translateX(220%)}}
 .ripple{position:absolute;top:-4px;left:-30%;width:60%;height:8px;border-radius:50%;background:rgba(255,255,255,.3);filter:blur(3px);animation:flow 4.5s ease-in-out infinite}
 .r2{animation-delay:2.2s}
 @keyframes flow{0%{left:-30%;opacity:.5}50%{left:70%;opacity:.95}100%{left:130%;opacity:.5}}
 .tank-data{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:132px}
 .pct{font-family:var(--mono);font-size:3rem;font-weight:600;line-height:1;display:flex;align-items:baseline;gap:4px}
 .pct .unit{font-size:1rem;color:var(--dim)}
+.pct.pop{animation:pop .45s ease-out}
+@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.09);color:var(--aqua)}100%{transform:scale(1)}}
 .volts{font-family:var(--mono);font-size:.95rem}
 .amps{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
 .bstat{font-family:var(--mono);font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--green);margin-top:2px}
@@ -3642,31 +3709,56 @@ main{display:grid;gap:16px;margin-top:22px}
 .kv:last-of-type{border-bottom:none}
 .k{font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
 .v{font-family:var(--mono);font-size:1.05rem}
-.v.on{color:var(--aqua)}.v.block{color:var(--red)}.v.okg{color:var(--green)}
+.v.on{color:var(--aqua);animation:glowpulse 1.6s ease-in-out infinite}
+.v.block{color:var(--red);animation:dangerpulse 1.1s ease-in-out infinite}
+.v.okg{color:var(--green)}
+@keyframes glowpulse{0%,100%{text-shadow:0 0 6px rgba(55,210,187,.35)}50%{text-shadow:0 0 14px rgba(55,210,187,.7)}}
+@keyframes dangerpulse{0%,100%{opacity:1}50%{opacity:.55}}
 .big{font-family:var(--mono);font-size:1.9rem;font-weight:600}
 .small{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
 .sched-main{display:flex;justify-content:space-between;align-items:baseline;margin:2px 0 12px}
+.sched-sep{margin:12px 0;border-top:1px solid rgba(127,163,178,.09)}
+.sched-list{display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto}
+.sched-item{display:flex;align-items:center;gap:10px;padding:7px 10px;background:rgba(6,19,28,.5);border:1px solid rgba(127,163,178,.12);border-radius:9px;animation:schedIn .35s cubic-bezier(.22,1,.36,1) backwards}
+@keyframes schedIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+.sched-time{font-family:var(--mono);font-size:1rem;letter-spacing:.05em}
+.sched-dur{font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.sched-x{margin-left:auto;background:transparent;border:none;color:var(--faint);font-size:1.15rem;cursor:pointer;padding:0 4px;line-height:1;transition:color .15s,transform .15s}
+.sched-x:hover{color:var(--red);transform:scale(1.25)}
+.sched-empty{font-family:var(--mono);font-size:.8rem;color:var(--faint);text-align:center;padding:10px 0}
+.sched-add{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.sched-add .inp[type=time]{flex:1.3;min-width:96px}
+.sched-add .inp[type=number]{width:64px;flex:none}
+.sched-add .btn{flex:1;min-width:90px}
+.sched-add .btn.danger{flex:none;padding:13px 14px;min-width:0}
 .console .row{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:10px}
 @media(min-width:420px){.console .row{grid-template-columns:1fr 1fr}}
 .field{display:flex;gap:8px;align-items:stretch}
-.inp{width:76px;background:rgba(6,19,28,.7);border:1px solid var(--line);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:1rem;padding:12px 8px;text-align:center;outline:none;transition:border-color .15s}
-.inp:focus{border-color:var(--aqua)}
+.inp{background:rgba(6,19,28,.7);border:1px solid var(--line);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:1rem;padding:12px 8px;text-align:center;outline:none;transition:border-color .15s,box-shadow .2s}
+.inp:focus{border-color:var(--aqua);box-shadow:0 0 0 3px rgba(55,210,187,.12)}
 .inp::-webkit-outer-spin-button,.inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-.btn{flex:1;border:none;border-radius:9px;padding:13px 10px;font-weight:600;font-size:.95rem;letter-spacing:.03em;cursor:pointer;transition:transform .12s,filter .12s}
+.inp[type=time]{color-scheme:dark}
+.btn{border:none;border-radius:9px;padding:13px 10px;font-weight:600;font-size:.95rem;letter-spacing:.03em;cursor:pointer;transition:transform .12s,filter .12s,box-shadow .2s}
+.btn:hover{transform:translateY(-1px);filter:brightness(1.08)}
 .btn:active{transform:translateY(1px)}
-.btn:hover{filter:brightness(1.08)}
 .btn.primary{background:var(--aqua);color:#04211d}
+.btn.primary:hover{box-shadow:0 0 22px rgba(55,210,187,.35)}
 .btn.secondary{background:var(--blue);color:#042030}
+.btn.secondary:hover{box-shadow:0 0 22px rgba(90,169,230,.35)}
 .btn.warn{background:var(--amber);color:#2a1604}
+.btn.warn:hover{box-shadow:0 0 22px rgba(240,160,75,.3)}
 .btn.danger{background:transparent;border:1px solid rgba(225,85,84,.5);color:var(--red)}
+.btn.danger:hover{box-shadow:0 0 22px rgba(225,85,84,.25)}
 .btn:disabled{opacity:.5;cursor:wait}
 .cmdline{font-family:var(--mono);font-size:.78rem;color:var(--dim);min-height:1.2em;text-align:center;margin-top:8px}
 .cmdline.ok{color:var(--green)}.cmdline.err{color:var(--red)}
-footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--faint);letter-spacing:.1em}
-@media (prefers-reduced-motion:reduce){.beacon,.ripple{animation:none}.water{transition:none}}
+footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--faint);letter-spacing:.1em;animation:rise .6s .44s cubic-bezier(.22,1,.36,1) backwards}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
+<div class="bg-blob b1"></div>
+<div class="bg-blob b2"></div>
 <div class="shell">
   <header class="mast">
     <div class="brand">
@@ -3721,6 +3813,16 @@ footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem
         </div>
       </div>
       <div class="kv"><span class="k" id="lLast"></span><span class="v" id="lastFeed">--</span></div>
+      <div class="sched-sep"></div>
+      <div class="k" id="lAllFeeds"></div>
+      <div class="sched-list" id="schedList"></div>
+      <div class="sched-add">
+        <input class="inp" id="schedTime" type="time" value="08:00">
+        <input class="inp" id="schedDur" type="number" value="5" min="1" max="30">
+        <button class="btn primary" id="bSchedAdd" onclick="addSched()"></button>
+        <button class="btn danger" id="bSchedClear" onclick="clearSched()"></button>
+      </div>
+      <div class="cmdline" id="schedMsg"></div>
     </section>
 
     <section class="panel console">
@@ -3745,11 +3847,14 @@ const T = __TRANS__;
 const LANG = "__LANG__";
 const $ = function(id){ return document.getElementById(id); };
 let lastCmd = 0;
+let lastPct = null;
+let lastSchedJson = "";
 
 function setLang(l){ window.location.href = "/?lang=" + l; }
 function setClock(){ const d = new Date(); const p = function(n){ return String(n).padStart(2, "0"); }; $("clock").textContent = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); }
 function fmtHM(epoch){ const d = new Date(epoch * 1000); const p = function(n){ return String(n).padStart(2, "0"); }; return p(d.getHours()) + ":" + p(d.getMinutes()); }
-function pctFrom(v){ return Math.max(0, Math.min(100, (v - 5.0) / (6.5 - 5.0) * 100)); }
+function pctFrom(v){ return Math.max(0, Math.min(100, (v - 5.0) / (6.4 - 5.0) * 100)); }
+function pop(el){ el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); }
 
 function init(){
   $("loc").textContent = T.station;
@@ -3761,15 +3866,20 @@ function init(){
   $("lSensor").textContent = T.sensor;
   $("lNext").textContent = T.next;
   $("lLast").textContent = T.last;
+  $("lAllFeeds").textContent = T.all_feeds;
   $("bFeed").textContent = T.feed;
   $("bReverse").textContent = T.reverse;
   $("bStop").textContent = T.stop;
   $("bKill").textContent = T.kill;
+  $("bSchedAdd").textContent = T.add_time;
+  $("bSchedClear").textContent = T.clear_all;
   $("feedSecs").title = T.duration;
   $("revSecs").title = T.duration;
+  $("schedDur").title = T.duration;
   $("wifiBanner").textContent = T.wifi_banner;
   document.querySelectorAll(".lbtn").forEach(function(b){ b.classList.toggle("active", b.dataset.lang === LANG); });
   document.title = T.title;
+  loadSchedules();
 }
 
 async function poll(){
@@ -3779,21 +3889,26 @@ async function poll(){
     const now = Math.floor(Date.now() / 1000);
     const fresh = s.ts && (now - s.ts) < 15;
     $("beacon").className = "beacon" + (fresh ? "" : " stale");
-    $("sweep").textContent = s.ts ? (fmtHM(s.ts) + (fresh ? "" : " · " + T.stale)) : T.stale;
+    const sw = $("sweep");
+    sw.textContent = s.ts ? (fmtHM(s.ts) + (fresh ? "" : " · " + T.stale)) : T.stale;
+    sw.className = "sweep" + (fresh ? "" : " stale");
     $("wifiBanner").hidden = !s.wifi_setup_needed;
 
     const v = s.battery_voltage;
     const w = $("water");
     if (v !== null && v !== undefined) {
       const p = pctFrom(v);
+      const tier = (v < 5.0 || p < 20) ? "low" : (p < 50 ? "warn" : "");
       w.style.height = p + "%";
-      w.className = "water" + (v < 5.0 ? " low" : v < 5.3 ? " warn" : "");
+      w.className = "water" + (tier ? " " + tier : "");
+      if (lastPct !== null && Math.round(p) !== Math.round(lastPct)) pop($("pct"));
+      lastPct = p;
       $("pct").innerHTML = p.toFixed(0) + '<span class="unit">%</span>';
       $("volts").textContent = v.toFixed(2) + " V";
       $("amps").textContent = (s.battery_current !== null && s.battery_current !== undefined) ? s.battery_current.toFixed(0) + " mA" : "";
       const bs = $("bstat");
-      if (v < 5.0) { bs.textContent = T.crit; bs.className = "bstat low"; }
-      else if (v < 5.3) { bs.textContent = T.low; bs.className = "bstat warn"; }
+      if (v < 5.0 || p < 20) { bs.textContent = T.crit; bs.className = "bstat low"; }
+      else if (p < 50) { bs.textContent = T.low; bs.className = "bstat warn"; }
       else { bs.textContent = T.ok; bs.className = "bstat"; }
     } else {
       w.style.height = "0%";
@@ -3802,6 +3917,7 @@ async function poll(){
       $("volts").textContent = T.no_sensor;
       $("amps").textContent = "";
       $("bstat").textContent = "";
+      lastPct = null;
     }
 
     const m = s.motor || "IDLE";
@@ -3826,8 +3942,90 @@ async function poll(){
     $("lastFeed").textContent = s.last_feed ? fmtHM(s.last_feed) : "--";
 
     $("ver").textContent = s.bot_version || "";
+    loadSchedules();
   } catch(e) { /* keep last known state */ }
   setTimeout(poll, 2000);
+}
+
+async function loadSchedules(){
+  try{
+    const r = await fetch("/api/schedules");
+    const list = await r.json();
+    const key = JSON.stringify(list);
+    if (key === lastSchedJson) return;
+    lastSchedJson = key;
+    const box = $("schedList");
+    box.innerHTML = "";
+    if (!list || !list.length){
+      const em = document.createElement("div");
+      em.className = "sched-empty";
+      em.textContent = T.sched_empty;
+      box.appendChild(em);
+      return;
+    }
+    list.forEach(function(s){
+      let h = s.hour, m = s.minute;
+      if (typeof s === "string" && s.indexOf(":") >= 0){
+        const parts = s.split(":");
+        h = parseInt(parts[0], 10); m = parseInt(parts[1], 10);
+      }
+      const row = document.createElement("div");
+      row.className = "sched-item";
+      const t = document.createElement("span");
+      t.className = "sched-time";
+      t.textContent = ("0" + h).slice(-2) + ":" + ("0" + m).slice(-2);
+      const d = document.createElement("span");
+      d.className = "sched-dur";
+      d.textContent = (s.duration || 5) + "s";
+      const x = document.createElement("button");
+      x.className = "sched-x";
+      x.textContent = "\u00d7";
+      x.title = T.sched_removed;
+      x.onclick = function(){ delSched(h, m); };
+      row.appendChild(t); row.appendChild(d); row.appendChild(x);
+      box.appendChild(row);
+    });
+  }catch(e){}
+}
+
+function schedMsg(text, ok){
+  const msg = $("schedMsg");
+  msg.textContent = text;
+  msg.className = "cmdline" + (ok ? " ok" : " err");
+}
+
+async function addSched(){
+  const tv = $("schedTime").value;
+  if (!tv) return;
+  const parts = tv.split(":");
+  const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+  const d = Math.max(1, Math.min(30, parseInt($("schedDur").value) || 5));
+  schedMsg(T.sending, null);
+  try{
+    const r = await fetch("/api/schedule/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hour: h, minute: m, duration: d }) });
+    const res = await r.json();
+    if (res.ok) { schedMsg(T.sched_added, true); lastSchedJson = ""; loadSchedules(); }
+    else schedMsg(T.failed, false);
+  }catch(e){ schedMsg(T.failed, false); }
+}
+
+async function delSched(h, m){
+  try{
+    const r = await fetch("/api/schedule/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hour: h, minute: m }) });
+    const res = await r.json();
+    if (res.ok) { schedMsg(T.sched_removed, true); lastSchedJson = ""; loadSchedules(); }
+    else schedMsg(T.failed, false);
+  }catch(e){ schedMsg(T.failed, false); }
+}
+
+async function clearSched(){
+  if (!confirm(T.confirm_clear)) return;
+  try{
+    const r = await fetch("/api/schedule/clear", { method: "POST" });
+    const res = await r.json();
+    if (res.ok) { schedMsg(T.sched_cleared, true); lastSchedJson = ""; loadSchedules(); }
+    else schedMsg(T.failed, false);
+  }catch(e){ schedMsg(T.failed, false); }
 }
 
 async function sendCmd(a){
@@ -3949,6 +4147,45 @@ def api_command(action):
         return jsonify({"ok": True, "action": action})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
+
+@app.route("/api/schedules")
+def api_schedules():
+    try:
+        with open(os.path.join(REPO, "schedules.json")) as f:
+            return jsonify(json.load(f))
+    except Exception:
+        return jsonify([])
+
+def _queue_sched_cmd(action, data):
+    cmd = {"action": action, "ts": time.time()}
+    cmd.update(data)
+    try:
+        with open(os.path.join(REPO, "command.json"), "w") as f:
+            json.dump(cmd, f)
+        return jsonify({"ok": True, "action": action})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+@app.route("/api/schedule/add", methods=["POST"])
+def api_schedule_add():
+    data = request.get_json(force=True, silent=True) or {}
+    h = int(data.get("hour", 0))
+    m = int(data.get("minute", 0))
+    d = int(data.get("duration", 5))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return jsonify({"ok": False, "error": "invalid time"})
+    return _queue_sched_cmd("schedule_add", {"hour": h, "minute": m, "duration": d})
+
+@app.route("/api/schedule/remove", methods=["POST"])
+def api_schedule_remove():
+    data = request.get_json(force=True, silent=True) or {}
+    h = int(data.get("hour", 0))
+    m = int(data.get("minute", 0))
+    return _queue_sched_cmd("schedule_remove", {"hour": h, "minute": m})
+
+@app.route("/api/schedule/clear", methods=["POST"])
+def api_schedule_clear():
+    return _queue_sched_cmd("schedule_clear", {})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=False)
