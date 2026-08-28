@@ -81,11 +81,11 @@ FEED_DURATION_DEFAULT = 5   # seconds
 FEED_DURATION_MAX = 30      # seconds cap
 
 # Default battery thresholds (can be changed via !battery_config)
-BATTERY_MIN_VOLTAGE = 6.5
+BATTERY_MIN_VOLTAGE = 5.0
 BATTERY_MAX_CURRENT_MA = 1200
-LOW_BATTERY_WARNING_THRESHOLD = 6.4  # Warn user below this voltage
-BATTERY_FULL_VOLTAGE = None          # Voltage considered 100%
-BATTERY_EMPTY_VOLTAGE = None         # Voltage considered 0%
+LOW_BATTERY_WARNING_THRESHOLD = 5.3  # Warn user below this voltage
+BATTERY_FULL_VOLTAGE = 6.5          # Voltage considered 100%
+BATTERY_EMPTY_VOLTAGE = 5.0         # Voltage considered 0% (below = blackout)
 
 # INA219 config
 SHUNT_OHMS = 0.1
@@ -104,7 +104,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.1.0"
+BOT_VERSION = "3.2.1"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -261,7 +261,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **Battery Configuration**",
         "bat_conf_pct_on": "✅ **Percentage display is ENABLED**",
         "bat_conf_pct_off": "⚠️ **Percentage display is DISABLED**\n💡 **To enable:** Set `full` and `empty` voltages.",
-        "bat_conf_usage": "❌ Please provide a value. Example: `!battery_config full 8.4`",
+        "bat_conf_usage": "❌ Please provide a value. Example: `!battery_config full 6.5`",
         "bat_conf_invalid_v": "❌ Invalid voltage. Must be between 0-15V",
         "bat_conf_updated": "✅ {setting} updated: {old} → {new}",
         "bat_conf_unknown": "❌ Unknown setting `{setting}`. Valid: `min`, `warning`, `max_current`, `full`, `empty`",
@@ -443,7 +443,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **การตั้งค่าแบตเตอรี่**",
         "bat_conf_pct_on": "✅ **การแสดงเปอร์เซ็นต์เปิดใช้งานอยู่**",
         "bat_conf_pct_off": "⚠️ **การแสดงเปอร์เซ็นต์ปิดอยู่**\n💡 **วิธีเปิด:** ตั้งค่าแรงดัน `full` และ `empty`",
-        "bat_conf_usage": "❌ โปรดระบุค่า ตัวอย่าง: `!battery_config full 8.4`",
+        "bat_conf_usage": "❌ โปรดระบุค่า ตัวอย่าง: `!battery_config full 6.5`",
         "bat_conf_invalid_v": "❌ แรงดันไฟไม่ถูกต้อง (0-15V)",
         "bat_conf_updated": "✅ {setting} อัปเดต: {old} → {new}",
         "bat_conf_unknown": "❌ ไม่รู้จักการตั้งค่า `{setting}`",
@@ -625,7 +625,7 @@ TRANSLATIONS = {
         "bat_conf_header": "🔋 **电池配置**",
         "bat_conf_pct_on": "✅ **百分比显示已启用**",
         "bat_conf_pct_off": "⚠️ **百分比显示已禁用**\n💡 **启用:** 设置 `full` 和 `empty` 电压。",
-        "bat_conf_usage": "❌ 请提供一个值。例如: `!battery_config full 8.4`",
+        "bat_conf_usage": "❌ 请提供一个值。例如: `!battery_config full 6.5`",
         "bat_conf_invalid_v": "❌ 无效电压。必须在 0-15V 之间",
         "bat_conf_updated": "✅ {setting} 已更新: {old} → {new}",
         "bat_conf_unknown": "❌ 未知设置 `{setting}`",
@@ -3480,117 +3480,336 @@ if __name__ == "__main__":
 '''
 
 WEB_CODE = r"""import os, json, time
-from flask import Flask, jsonify, request, make_response, render_template_string
+from flask import Flask, jsonify, request, make_response
 
 REPO = "/home/sira/fishfeeder"
 PORT = int(os.environ.get("WEB_PORT", 5000))
 
 T = {
-"en":{"title":"FishFeeder","dash":"Dashboard","ctrl":"Controls","bat":"Battery","motor":"Motor","sensor":"Sensor","schedule":"Schedule","last_feed":"Last Feed","feed":"Feed (s)","reverse":"Reverse (s)","stop":"STOP","kill":"KILL","back":"Back","idle":"IDLE","running":"FORWARD","rev":"REVERSE","stopped":"STOPPED","pressed":"PRESSED","open":"OPEN","na":"N/A","next":"Next","total":"Total","today":"Today","tomorrow":"Tomorrow","ago":"{:.0f}s ago","launch":"Launching...","cmd_sent":"Command sent","cmd_fail":"Failed","no_data":"---","lang_en":"EN","lang_th":"TH","lang_zh":"ZH","feed_ok":"Feed sent","rev_ok":"Reverse sent","stop_ok":"Stop sent","kill_ok":"Kill sent"},
-"th":{"title":"\u0e1b\u0e25\u0e32\u0e2d\u0e31\u0e08\u0e09\u0e23\u0e34\u0e22\u0e30","dash":"\u0e41\u0e14\u0e0a\u0e1a\u0e2d\u0e23\u0e4c\u0e14","ctrl":"\u0e04\u0e27\u0e1a\u0e04\u0e38\u0e21","bat":"\u0e41\u0e1a\u0e15\u0e40\u0e15\u0e2d\u0e23\u0e35\u0e48","motor":"\u0e21\u0e40\u0e15\u0e2d\u0e23\u0e4c","sensor":"\u0e40\u0e0b\u0e47\u0e19\u0e40\u0e0b\u0e2d\u0e23\u0e4c","schedule":"\u0e15\u0e32\u0e23\u0e32\u0e07","last_feed":"\u0e21\u0e37\u0e2d\u0e25\u0e48\u0e32\u0e2a\u0e38\u0e14","feed":"\u0e1b\u0e49\u0e2d\u0e19 (\u0e27\u0e34\u0e19\u0e32\u0e17\u0e35)","reverse":"\u0e22\u0e49\u0e2d\u0e19 (\u0e27\u0e34\u0e19\u0e32\u0e17\u0e35)","stop":"\u0e2b\u0e22\u0e38\u0e14","kill":"\u0e09\u0e38\u0e14\u0e40\u0e09\u0e34\u0e19","back":"\u0e01\u0e25\u0e31\u0e1a","idle":"\u0e27\u0e48\u0e32\u0e07","running":"\u0e17\u0e33\u0e07\u0e32\u0e19","rev":"\u0e22\u0e49\u0e2d\u0e19","stopped":"\u0e2b\u0e22\u0e38\u0e14","pressed":"\u0e01\u0e14","open":"\u0e40\u0e1b\u0e34\u0e14","na":"N/A","next":"\u0e16\u0e31\u0e14\u0e44\u0e1b","total":"\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14","today":"\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49","tomorrow":"\u0e1e\u0e23\u0e38\u0e48\u0e07\u0e19\u0e35\u0e49","ago":"{:.0f}\u0e27\u0e34\u0e19\u0e32\u0e17\u0e35\u0e17\u0e35\u0e48\u0e41\u0e25\u0e49\u0e27","launch":"\u0e01\u0e33\u0e25\u0e31\u0e07\u0e40\u0e1b\u0e34\u0e14...","cmd_sent":"\u0e2a\u0e48\u0e07\u0e04\u0e33\u0e2a\u0e31\u0e48\u0e07\u0e41\u0e25\u0e49\u0e27","cmd_fail":"\u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27","no_data":"---","lang_en":"EN","lang_th":"TH","lang_zh":"ZH","feed_ok":"\u0e2a\u0e48\u0e07\u0e1b\u0e49\u0e2d\u0e19\u0e41\u0e25\u0e49\u0e27","rev_ok":"\u0e2a\u0e48\u0e07\u0e22\u0e49\u0e2d\u0e19\u0e41\u0e25\u0e49\u0e27","stop_ok":"\u0e2a\u0e48\u0e07\u0e2b\u0e22\u0e38\u0e14\u0e41\u0e25\u0e49\u0e27","kill_ok":"\u0e2a\u0e48\u0e07\u0e09\u0e38\u0e14\u0e40\u0e09\u0e34\u0e19\u0e41\u0e25\u0e49\u0e27"},
-"zh":{"title":"\u667a\u80fd\u5582\u9c7c\u5668","dash":"\u4eea\u8868\u677f","ctrl":"\u63a7\u5236","bat":"\u7535\u6c60","motor":"\u7535\u673a","sensor":"\u4f20\u611f\u5668","schedule":"\u8ba1\u5212","last_feed":"\u4e0a\u6b21\u5582\u98df","feed":"\u5582\u98df(\u79d2)","reverse":"\u5012\u8f6c(\u79d2)","stop":"\u505c\u6b62","kill":"\u5173\u95ed","back":"\u8fd4\u56de","idle":"\u7b49\u5f85","running":"\u8fd0\u884c\u4e2d","rev":"\u5012\u8f6c","stopped":"\u5df2\u505c\u6b62","pressed":"\u5df2\u6309\u538b","open":"\u5f00\u542f","na":"N/A","next":"\u4e0b\u4e00\u6b21","total":"\u5168\u90e8","today":"\u4eca\u5929","tomorrow":"\u660e\u5929","ago":"{:.0f}\u79d2\u524d","launch":"\u6b63\u5728\u542f\u52a8...","cmd_sent":"\u547d\u4ee4\u5df2\u53d1\u9001","cmd_fail":"\u5931\u8d25","no_data":"---","lang_en":"EN","lang_th":"TH","lang_zh":"ZH","feed_ok":"\u5582\u98df\u5df2\u53d1\u9001","rev_ok":"\u5012\u8f6c\u5df2\u53d1\u9001","stop_ok":"\u505c\u6b62\u5df2\u53d1\u9001","kill_ok":"\u5173\u95ed\u5df2\u53d1\u9001"}
+"en": {
+  "title": "FishFeeder Station", "station": "Samutprakan · Station 01",
+  "power": "Power", "motion": "Motion", "schedule": "Schedule", "console": "Console",
+  "voltage": "Voltage", "current": "Current", "motor": "Motor", "sensor": "Sensor",
+  "next": "Next feed", "last": "Last feed", "feeds": "feed times",
+  "today": "Today", "tomorrow": "Tomorrow",
+  "duration": "Duration (s)", "feed": "Feed", "reverse": "Reverse",
+  "stop": "Stop motor", "kill": "Kill system",
+  "idle": "Idle", "forward": "Feeding", "stopped": "Stopped",
+  "blocked": "Blocked", "clear": "Clear", "no_sensor": "No sensor",
+  "sending": "Sending", "sent": "Sent", "failed": "Send failed",
+  "stale": "Telemetry stale", "ok": "OK", "low": "Low", "crit": "Critical",
+  "wifi_banner": "WiFi setup needed - connect to the hotspot"
+},
+"th": {
+  "title": "สถานีให้อาหารปลา", "station": "สมุทรปราการ · สถานี 01",
+  "power": "พลังงาน", "motion": "การทำงาน", "schedule": "ตาราง", "console": "ควบคุม",
+  "voltage": "แรงดัน", "current": "กระแส", "motor": "มอเตอร์", "sensor": "เซนเซอร์",
+  "next": "ให้อาหารครั้งถัดไป", "last": "ครั้งล่าสุด", "feeds": "ครั้ง",
+  "today": "วันนี้", "tomorrow": "พรุ่งนี้",
+  "duration": "ระยะเวลา (วินาที)", "feed": "ให้อาหาร", "reverse": "หมุนย้อน",
+  "stop": "หยุดมอเตอร์", "kill": "ปิดระบบ",
+  "idle": "ว่าง", "forward": "กำลังให้อาหาร", "stopped": "หยุดแล้ว",
+  "blocked": "ติดขัด", "clear": "ปกติ", "no_sensor": "ไม่มีเซนเซอร์",
+  "sending": "กำลังส่ง", "sent": "ส่งแล้ว", "failed": "ส่งไม่สำเร็จ",
+  "stale": "ข้อมูลล้าสมัย", "ok": "ปกติ", "low": "ต่ำ", "crit": "วิกฤต",
+  "wifi_banner": "ต้องตั้งค่า WiFi - เชื่อมต่อฮอตสปอต"
+},
+"zh": {
+  "title": "喂食站", "station": "北榄府 · 01号站",
+  "power": "电源", "motion": "运转", "schedule": "计划", "console": "控制",
+  "voltage": "电压", "current": "电流", "motor": "电机", "sensor": "传感器",
+  "next": "下次喂食", "last": "上次喂食", "feeds": "次",
+  "today": "今天", "tomorrow": "明天",
+  "duration": "时长（秒）", "feed": "喂食", "reverse": "反转",
+  "stop": "停止电机", "kill": "关闭系统",
+  "idle": "待机", "forward": "喂食中", "stopped": "已停止",
+  "blocked": "卡住", "clear": "正常", "no_sensor": "无传感器",
+  "sending": "发送中", "sent": "已发送", "failed": "发送失败",
+  "stale": "数据延迟", "ok": "正常", "low": "偏低", "crit": "危急",
+  "wifi_banner": "需要设置 WiFi - 请连接热点"
+}
 }
 
 HTML = '''<!DOCTYPE html>
-<html lang="{{lang}}">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{{t["title"]}}</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<html lang="__LANG__">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FishFeeder Station</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-*{font-family:'Inter',sans-serif}
-body{background:#0f172a;color:#fff;min-height:100vh}
-.nav{background:#1e293b;border-radius:16px;padding:4px;display:inline-flex;gap:4px;margin-bottom:24px}
-.nav button{padding:10px 28px;border-radius:12px;font-weight:600;font-size:.95rem;transition:all .15s;border:none;cursor:pointer}
-.nav button.active{background:#0ea5e9;color:#fff}
-.nav button:not(.active){background:transparent;color:#94a3b8}
-.nav button:not(.active):hover{color:#e2e8f0}
-.card{background:#1e293b;border-radius:16px;padding:20px;transition:all .2s;border:2px solid transparent}
-.card:hover{border-color:var(--ac);transform:translateY(-2px)}
-.val{font-size:1.8rem;font-weight:700;margin-top:6px}
-.lbl{font-size:.8rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px}
-.tag{background:rgba(255,255,255,.06);padding:2px 10px;border-radius:999px;font-size:.75rem}
-.btn{display:block;width:100%;padding:16px;border-radius:12px;font-weight:700;font-size:1.1rem;text-align:center;border:none;cursor:pointer;transition:all .15s}
-.btn:hover{transform:translateY(-1px);filter:brightness(1.1)}
-.btn:active{transform:translateY(0);filter:brightness(.95)}
-.btn-green{background:#22c55e;color:#fff}
-.btn-blue{background:#3b82f6;color:#fff}
-.btn-red{background:#ef4444;color:#fff}
-.btn-amber{background:#f59e0b;color:#fff}
-.btn-outline{background:transparent;border:2px solid #475569;color:#94a3b8}
-.btn-outline:hover{border-color:#64748b;color:#e2e8f0}
-.inp{width:100%;padding:12px 16px;border-radius:10px;background:#0f172a;border:2px solid #334155;color:#fff;font-size:1rem;text-align:center;outline:none;transition:border .15s}
-.inp:focus{border-color:#3b82f6}
-.ctrl-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:400px;margin:0 auto}
-.ctrl-full{grid-column:1/-1}
-</style></head>
+:root{
+  --bg:#06131c; --panel:#0b1f2b; --line:rgba(55,210,187,.14);
+  --ink:#d9ecf2; --dim:#7fa3b2; --faint:#4a7082;
+  --aqua:#37d2bb; --green:#5ad1a0; --amber:#f0a04b; --red:#e15554; --blue:#5aa9e6;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{color-scheme:dark}
+body{
+  background:var(--bg);color:var(--ink);font-family:var(--sans);min-height:100vh;
+  background-image:radial-gradient(1100px 500px at 85% -10%,rgba(55,210,187,.07),transparent 60%),
+                   radial-gradient(900px 500px at -10% 110%,rgba(90,169,230,.05),transparent 60%);
+}
+:focus-visible{outline:2px solid var(--aqua);outline-offset:2px}
+.shell{max-width:1060px;margin:0 auto;padding:28px 20px 44px}
+.mast{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:16px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:14px;align-items:center}
+.beacon{width:10px;height:10px;border-radius:50%;background:var(--aqua);flex:none;animation:pulse 2.4s infinite}
+.beacon.stale{background:var(--amber);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(55,210,187,.45)}70%{box-shadow:0 0 0 9px rgba(55,210,187,0)}100%{box-shadow:0 0 0 0 rgba(55,210,187,0)}}
+h1{font-size:1.05rem;letter-spacing:.34em;font-weight:600}
+.loc{font-size:.72rem;color:var(--dim);letter-spacing:.12em;margin-top:4px}
+.mast-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.clock{font-family:var(--mono);font-size:1.15rem;letter-spacing:.08em}
+.langs{display:flex;gap:6px}
+.lbtn{background:transparent;border:1px solid var(--line);color:var(--dim);font-family:var(--mono);font-size:.72rem;padding:5px 12px;border-radius:999px;cursor:pointer;letter-spacing:.08em;transition:all .15s}
+.lbtn:hover{color:var(--ink);border-color:var(--faint)}
+.lbtn.active{background:rgba(55,210,187,.16);border-color:var(--aqua);color:var(--aqua)}
+.banner{margin-top:18px;background:rgba(240,160,75,.12);border:1px solid rgba(240,160,75,.35);color:var(--amber);padding:10px 16px;border-radius:10px;font-size:.85rem}
+main{display:grid;gap:16px;margin-top:22px}
+@media(min-width:860px){main{grid-template-columns:1.05fr 1fr}.tank-panel{grid-row:span 2}}
+.panel{background:linear-gradient(180deg,var(--panel),rgba(11,31,43,.55));border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.panel-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+.kicker{font-size:.68rem;letter-spacing:.32em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.sweep{font-family:var(--mono);font-size:.7rem;color:var(--faint)}
+.tank-wrap{display:flex;gap:24px;align-items:stretch;justify-content:center;padding:4px 0 2px}
+.tank{position:relative;width:92px;height:208px;border:1px solid var(--line);border-radius:12px;background:rgba(6,19,28,.65);overflow:hidden}
+.ticks span{position:absolute;left:0;right:0;border-top:1px dashed rgba(127,163,178,.22)}
+.ticks span:nth-child(1){bottom:25%}.ticks span:nth-child(2){bottom:50%}.ticks span:nth-child(3){bottom:75%}
+.water{position:absolute;left:0;right:0;bottom:0;height:0%;background:linear-gradient(180deg,rgba(55,210,187,.95),rgba(23,120,110,.95));transition:height 1.1s cubic-bezier(.22,1,.36,1)}
+.water.warn{background:linear-gradient(180deg,rgba(240,160,75,.95),rgba(160,95,35,.95))}
+.water.low{background:linear-gradient(180deg,rgba(225,85,84,.95),rgba(150,45,45,.95))}
+.ripple{position:absolute;top:-4px;left:-30%;width:60%;height:8px;border-radius:50%;background:rgba(255,255,255,.3);filter:blur(3px);animation:flow 4.5s ease-in-out infinite}
+.r2{animation-delay:2.2s}
+@keyframes flow{0%{left:-30%;opacity:.5}50%{left:70%;opacity:.95}100%{left:130%;opacity:.5}}
+.tank-data{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:132px}
+.pct{font-family:var(--mono);font-size:3rem;font-weight:600;line-height:1;display:flex;align-items:baseline;gap:4px}
+.pct .unit{font-size:1rem;color:var(--dim)}
+.volts{font-family:var(--mono);font-size:.95rem}
+.amps{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
+.bstat{font-family:var(--mono);font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--green);margin-top:2px}
+.bstat.warn{color:var(--amber)}.bstat.low{color:var(--red)}
+.kv{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid rgba(127,163,178,.09)}
+.kv:last-of-type{border-bottom:none}
+.k{font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+.v{font-family:var(--mono);font-size:1.05rem}
+.v.on{color:var(--aqua)}.v.block{color:var(--red)}.v.okg{color:var(--green)}
+.big{font-family:var(--mono);font-size:1.9rem;font-weight:600}
+.small{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
+.sched-main{display:flex;justify-content:space-between;align-items:baseline;margin:2px 0 12px}
+.console .row{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:10px}
+@media(min-width:420px){.console .row{grid-template-columns:1fr 1fr}}
+.field{display:flex;gap:8px;align-items:stretch}
+.inp{width:76px;background:rgba(6,19,28,.7);border:1px solid var(--line);border-radius:9px;color:var(--ink);font-family:var(--mono);font-size:1rem;padding:12px 8px;text-align:center;outline:none;transition:border-color .15s}
+.inp:focus{border-color:var(--aqua)}
+.inp::-webkit-outer-spin-button,.inp::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.btn{flex:1;border:none;border-radius:9px;padding:13px 10px;font-weight:600;font-size:.95rem;letter-spacing:.03em;cursor:pointer;transition:transform .12s,filter .12s}
+.btn:active{transform:translateY(1px)}
+.btn:hover{filter:brightness(1.08)}
+.btn.primary{background:var(--aqua);color:#04211d}
+.btn.secondary{background:var(--blue);color:#042030}
+.btn.warn{background:var(--amber);color:#2a1604}
+.btn.danger{background:transparent;border:1px solid rgba(225,85,84,.5);color:var(--red)}
+.btn:disabled{opacity:.5;cursor:wait}
+.cmdline{font-family:var(--mono);font-size:.78rem;color:var(--dim);min-height:1.2em;text-align:center;margin-top:8px}
+.cmdline.ok{color:var(--green)}.cmdline.err{color:var(--red)}
+footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem;color:var(--faint);letter-spacing:.1em}
+@media (prefers-reduced-motion:reduce){.beacon,.ripple{animation:none}.water{transition:none}}
+</style>
+</head>
 <body>
-<div class="max-w-3xl mx-auto px-4 py-6">
-<div class="flex flex-wrap items-center justify-between mb-4">
-<div><h1 class="text-2xl font-bold text-sky-400">\U0001F41F {{t["title"]}}</h1>
-<p class="text-slate-500 text-xs mt-1">{{t["last"]}}: <span id="ts">--</span></p></div>
-<div class="flex gap-1.5">
-<button onclick="setLang('en')" class="px-2.5 py-1 rounded-lg text-xs font-medium {{'bg-sky-500 text-white' if lang=='en' else 'bg-slate-700 text-slate-400 hover:bg-slate-600'}}">{{t["lang_en"]}}</button>
-<button onclick="setLang('th')" class="px-2.5 py-1 rounded-lg text-xs font-medium {{'bg-sky-500 text-white' if lang=='th' else 'bg-slate-700 text-slate-400 hover:bg-slate-600'}}">{{t["lang_th"]}}</button>
-<button onclick="setLang('zh')" class="px-2.5 py-1 rounded-lg text-xs font-medium {{'bg-sky-500 text-white' if lang=='zh' else 'bg-slate-700 text-slate-400 hover:bg-slate-600'}}">{{t["lang_zh"]}}</button>
-</div></div>
+<div class="shell">
+  <header class="mast">
+    <div class="brand">
+      <span class="beacon" id="beacon"></span>
+      <div>
+        <h1>FISHFEEDER</h1>
+        <p class="loc" id="loc"></p>
+      </div>
+    </div>
+    <div class="mast-right">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="langs">
+        <button class="lbtn" data-lang="en" onclick="setLang('en')">EN</button>
+        <button class="lbtn" data-lang="th" onclick="setLang('th')">TH</button>
+        <button class="lbtn" data-lang="zh" onclick="setLang('zh')">ZH</button>
+      </div>
+    </div>
+  </header>
 
-<div class="nav" id="nav">
-<button class="active" onclick="showView('dash')" id="nav-dash">{{t["dash"]}}</button>
-<button onclick="showView('ctrl')" id="nav-ctrl">{{t["ctrl"]}}</button>
+  <div class="banner" id="wifiBanner" hidden></div>
+
+  <main>
+    <section class="panel tank-panel">
+      <div class="panel-head"><span class="kicker" id="kPower"></span><span class="sweep" id="sweep"></span></div>
+      <div class="tank-wrap">
+        <div class="tank">
+          <div class="ticks"><span></span><span></span><span></span></div>
+          <div class="water" id="water"><div class="ripple r1"></div><div class="ripple r2"></div></div>
+        </div>
+        <div class="tank-data">
+          <div class="pct" id="pct">--<span class="unit">%</span></div>
+          <div class="volts" id="volts">--</div>
+          <div class="amps" id="amps"></div>
+          <div class="bstat" id="bstat"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="kicker" id="kMotion"></span></div>
+      <div class="kv"><span class="k" id="lMotor"></span><span class="v" id="motor">--</span></div>
+      <div class="kv"><span class="k" id="lSensor"></span><span class="v" id="sensor">--</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="kicker" id="kSchedule"></span></div>
+      <div class="sched-main">
+        <div>
+          <div class="k" id="lNext"></div>
+          <div class="big" id="nextFeed">--:--</div>
+          <div class="small" id="nextSub"></div>
+        </div>
+      </div>
+      <div class="kv"><span class="k" id="lLast"></span><span class="v" id="lastFeed">--</span></div>
+    </section>
+
+    <section class="panel console">
+      <div class="panel-head"><span class="kicker" id="kConsole"></span></div>
+      <div class="row">
+        <div class="field"><input class="inp" id="feedSecs" type="number" value="5" min="1" max="30"><button class="btn primary" id="bFeed" onclick="sendCmd('feed')"></button></div>
+        <div class="field"><input class="inp" id="revSecs" type="number" value="3" min="1" max="30"><button class="btn secondary" id="bReverse" onclick="sendCmd('reverse')"></button></div>
+      </div>
+      <div class="row">
+        <button class="btn warn" id="bStop" onclick="sendCmd('stop')"></button>
+        <button class="btn danger" id="bKill" onclick="sendCmd('kill')"></button>
+      </div>
+      <div class="cmdline" id="cmdline"></div>
+    </section>
+  </main>
+
+  <footer>FISHFEEDER · MBPATCH <span id="ver"></span></footer>
 </div>
-
-<div id="view-dash">
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-<div class="card" style="--ac:#22c55e"><div class="flex items-center justify-between"><span class="lbl">{{t["bat"]}}</span><span class="tag" id="bat_lbl">--</span></div><div class="val" id="bat_val" style="color:#22c55e">--</div><div class="text-xs text-slate-500 mt-0.5" id="bat_sub"></div></div>
-<div class="card" style="--ac:#3b82f6"><div class="flex items-center justify-between"><span class="lbl">{{t["motor"]}}</span><span class="tag" id="motor_lbl">--</span></div><div class="val" id="motor_val" style="color:#3b82f6">--</div><div class="text-xs text-slate-500 mt-0.5" id="motor_sub"></div></div>
-<div class="card" style="--ac:#eab308"><div class="flex items-center justify-between"><span class="lbl">{{t["sensor"]}}</span><span class="tag" id="sensor_lbl">--</span></div><div class="val" id="sensor_val" style="color:#eab308">--</div><div class="text-xs text-slate-500 mt-0.5" id="sensor_sub"></div></div>
-<div class="card" style="--ac:#a855f7"><div class="flex items-center justify-between"><span class="lbl">{{t["schedule"]}}</span><span class="tag" id="sched_lbl">--</span></div><div class="val" id="sched_val" style="color:#a855f7;font-size:1.4rem">--</div><div class="text-xs text-slate-500 mt-0.5" id="sched_sub"></div></div>
-</div>
-<div class="grid grid-cols-2 gap-3 mt-3">
-<div class="card" style="--ac:#f59e0b"><div class="flex items-center justify-between"><span class="lbl">{{t["last_feed"]}}</span><span class="tag" id="feed_lbl">--</span></div><div class="val" id="feed_val" style="color:#f59e0b;font-size:1.2rem">--</div><div class="text-xs text-slate-500 mt-0.5" id="feed_sub"></div></div>
-</div></div>
-
-<div id="view-ctrl" style="display:none">
-<div class="ctrl-grid">
-<div class="ctrl-full"><label class="lbl block text-center mb-1.5">{{t["feed"]}}</label>
-<input class="inp" id="feed_secs" type="number" value="5" min="1" max="30">
-<button class="btn btn-green mt-2" onclick="sendCmd('feed')">{{t["feed"]}}</button></div>
-<div class="ctrl-full"><label class="lbl block text-center mb-1.5">{{t["reverse"]}}</label>
-<input class="inp" id="rev_secs" type="number" value="3" min="1" max="30">
-<button class="btn btn-blue mt-2" onclick="sendCmd('reverse')">{{t["reverse"]}}</button></div>
-<button class="btn btn-amber ctrl-full" onclick="sendCmd('stop')">{{t["stop"]}}</button>
-<button class="btn btn-red ctrl-full" onclick="sendCmd('kill')">{{t["kill"]}}</button>
-<div class="ctrl-full text-center text-sm text-slate-500" id="cmd_status" style="min-height:20px"></div>
-</div></div>
 
 <script>
-const T = {{t|tojson|safe}}; let lang = "{{lang}}";
-function setLang(l){lang=l;document.cookie="lang="+l+";path=/;max-age=31536000";window.location.reload();}
-function showView(v){document.getElementById("view-dash").style.display=v==="dash"?"":"none";document.getElementById("view-ctrl").style.display=v==="ctrl"?"":"none";document.getElementById("nav-dash").className=v==="dash"?"active":"";document.getElementById("nav-ctrl").className=v==="ctrl"?"active":"";}
+const T = __TRANS__;
+const LANG = "__LANG__";
+const $ = function(id){ return document.getElementById(id); };
+let lastCmd = 0;
 
-async function sendCmd(a){const s=a==="feed"?document.getElementById("feed_secs").value:a==="reverse"?document.getElementById("rev_secs").value:0;document.getElementById("cmd_status").textContent=T.launch;try{const r=await fetch("/api/"+a,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seconds:parseInt(s)||5})});const d=await r.json();document.getElementById("cmd_status").textContent=d.ok?T.cmd_sent:T.cmd_fail;}catch(e){document.getElementById("cmd_status").textContent=T.cmd_fail;}}
+function setLang(l){ window.location.href = "/?lang=" + l; }
+function setClock(){ const d = new Date(); const p = function(n){ return String(n).padStart(2, "0"); }; $("clock").textContent = p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); }
+function fmtHM(epoch){ const d = new Date(epoch * 1000); const p = function(n){ return String(n).padStart(2, "0"); }; return p(d.getHours()) + ":" + p(d.getMinutes()); }
+function pctFrom(v){ return Math.max(0, Math.min(100, (v - 5.0) / (6.5 - 5.0) * 100)); }
 
-async function poll(){try{
-const r=await fetch("/api/status");const s=await r.json();const now=Math.floor(Date.now()/1000);const ago=s.ts?now-s.ts:0;
-const bv=s.battery_voltage;
-if(bv!==null&&bv!==undefined){document.getElementById("bat_val").textContent=bv.toFixed(2)+"V";document.getElementById("bat_sub").textContent=s.battery_current!==null?s.battery_current.toFixed(0)+"mA":"";if(bv>7)document.getElementById("bat_lbl").textContent=((bv-6.5)/(8.4-6.5)*100).toFixed(0)+"%";else document.getElementById("bat_lbl").textContent="OK";}
-else{document.getElementById("bat_val").textContent=T.na;document.getElementById("bat_lbl").textContent="";}
-const m=s.motor||"IDLE";const mm={FORWARD:T.running,REVERSE:T.rev,STOPPED:T.stopped,IDLE:T.idle};
-document.getElementById("motor_val").textContent=mm[m]||m;document.getElementById("motor_val").style.color=(m==="FORWARD"||m==="REVERSE")?"#22c55e":"#3b82f6";
-document.getElementById("motor_sub").textContent=m==="FORWARD"||m==="REVERSE"?T.ago.replace("{:.0f}",ago.toFixed(0)):"";
-const sn=s.sensor||"OPEN";const sv=sn==="PRESSED"?T.pressed:T.open;
-document.getElementById("sensor_val").textContent=sv;document.getElementById("sensor_val").style.color=sn==="PRESSED"?"#ef4444":"#eab308";
-document.getElementById("sensor_sub").textContent=sn==="PRESSED"?T.ago.replace("{:.0f}",ago.toFixed(0)):"";
-const sc=s.schedule;const lst=s.last_feed;
-if(sc&&sc.next){document.getElementById("sched_val").textContent=sc.next;document.getElementById("sched_sub").textContent=sc.total+" "+T.total;document.getElementById("sched_lbl").textContent=sc.next_idx===0?T.today:T.tomorrow;}
-else{document.getElementById("sched_val").textContent=T.no_data;document.getElementById("sched_sub").textContent="";document.getElementById("sched_lbl").textContent="";}
-if(lst){const fd=new Date(lst*1000);const diff=now-lst;document.getElementById("feed_val").textContent=fd.toLocaleTimeString();document.getElementById("feed_sub").textContent=diff<3600?Math.floor(diff/60)+"m ago":Math.floor(diff/3600)+"h ago";document.getElementById("feed_lbl").textContent=fd.toLocaleDateString();}
-else{document.getElementById("feed_val").textContent=T.no_data;document.getElementById("feed_sub").textContent="";document.getElementById("feed_lbl").textContent="";}
-if(s.ts){const d=new Date(s.ts*1000);document.getElementById("ts").textContent=d.toLocaleTimeString();}
-}catch(e){console.log("poll err",e);}setTimeout(poll,2000);}
+function init(){
+  $("loc").textContent = T.station;
+  $("kPower").textContent = T.power;
+  $("kMotion").textContent = T.motion;
+  $("kSchedule").textContent = T.schedule;
+  $("kConsole").textContent = T.console;
+  $("lMotor").textContent = T.motor;
+  $("lSensor").textContent = T.sensor;
+  $("lNext").textContent = T.next;
+  $("lLast").textContent = T.last;
+  $("bFeed").textContent = T.feed;
+  $("bReverse").textContent = T.reverse;
+  $("bStop").textContent = T.stop;
+  $("bKill").textContent = T.kill;
+  $("feedSecs").title = T.duration;
+  $("revSecs").title = T.duration;
+  $("wifiBanner").textContent = T.wifi_banner;
+  document.querySelectorAll(".lbtn").forEach(function(b){ b.classList.toggle("active", b.dataset.lang === LANG); });
+  document.title = T.title;
+}
+
+async function poll(){
+  try{
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    const now = Math.floor(Date.now() / 1000);
+    const fresh = s.ts && (now - s.ts) < 15;
+    $("beacon").className = "beacon" + (fresh ? "" : " stale");
+    $("sweep").textContent = s.ts ? (fmtHM(s.ts) + (fresh ? "" : " · " + T.stale)) : T.stale;
+    $("wifiBanner").hidden = !s.wifi_setup_needed;
+
+    const v = s.battery_voltage;
+    const w = $("water");
+    if (v !== null && v !== undefined) {
+      const p = pctFrom(v);
+      w.style.height = p + "%";
+      w.className = "water" + (v < 5.0 ? " low" : v < 5.3 ? " warn" : "");
+      $("pct").innerHTML = p.toFixed(0) + '<span class="unit">%</span>';
+      $("volts").textContent = v.toFixed(2) + " V";
+      $("amps").textContent = (s.battery_current !== null && s.battery_current !== undefined) ? s.battery_current.toFixed(0) + " mA" : "";
+      const bs = $("bstat");
+      if (v < 5.0) { bs.textContent = T.crit; bs.className = "bstat low"; }
+      else if (v < 5.3) { bs.textContent = T.low; bs.className = "bstat warn"; }
+      else { bs.textContent = T.ok; bs.className = "bstat"; }
+    } else {
+      w.style.height = "0%";
+      w.className = "water";
+      $("pct").innerHTML = '--<span class="unit">%</span>';
+      $("volts").textContent = T.no_sensor;
+      $("amps").textContent = "";
+      $("bstat").textContent = "";
+    }
+
+    const m = s.motor || "IDLE";
+    const mm = { IDLE: T.idle, FORWARD: T.forward, REVERSE: T.reverse, STOPPED: T.stopped };
+    const mv = $("motor");
+    mv.textContent = mm[m] || m;
+    mv.className = "v" + ((m === "FORWARD" || m === "REVERSE") ? " on" : "");
+
+    const sn = s.sensor || "OPEN";
+    const sv = $("sensor");
+    if (sn === "PRESSED") { sv.textContent = T.blocked; sv.className = "v block"; }
+    else { sv.textContent = T.clear; sv.className = "v okg"; }
+
+    const sc = s.schedule;
+    if (sc && sc.next) {
+      $("nextFeed").textContent = sc.next;
+      $("nextSub").textContent = (sc.next_idx === 0 ? T.today : T.tomorrow) + " · " + sc.total + " " + T.feeds;
+    } else {
+      $("nextFeed").textContent = "--:--";
+      $("nextSub").textContent = "";
+    }
+    $("lastFeed").textContent = s.last_feed ? fmtHM(s.last_feed) : "--";
+
+    $("ver").textContent = s.bot_version || "";
+  } catch(e) { /* keep last known state */ }
+  setTimeout(poll, 2000);
+}
+
+async function sendCmd(a){
+  if (Date.now() - lastCmd < 1500) return;
+  lastCmd = Date.now();
+  const line = $("cmdline");
+  let secs = 0;
+  if (a === "feed") secs = parseInt($("feedSecs").value) || 5;
+  if (a === "reverse") secs = parseInt($("revSecs").value) || 3;
+  line.textContent = T.sending;
+  line.className = "cmdline";
+  document.querySelectorAll(".btn").forEach(function(b){ b.disabled = true; });
+  try{
+    const r = await fetch("/api/" + a, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seconds: secs }) });
+    const d = await r.json();
+    if (d.ok) { line.textContent = T.sent; line.className = "cmdline ok"; }
+    else { line.textContent = T.failed; line.className = "cmdline err"; }
+  } catch(e){
+    line.textContent = T.failed;
+    line.className = "cmdline err";
+  }
+  setTimeout(function(){ document.querySelectorAll(".btn").forEach(function(b){ b.disabled = false; }); }, 1200);
+}
+
+init();
+setClock();
+setInterval(setClock, 1000);
 poll();
-</script></body></html>'''
+</script>
+</body></html>'''
 
 app = Flask(__name__)
 
@@ -3598,20 +3817,24 @@ def read_state():
     try:
         with open(os.path.join(REPO, "shared_state.json")) as f:
             return json.load(f)
-    except: return {}
+    except Exception:
+        return {}
 
 def read_json(file):
     try:
         with open(os.path.join(REPO, file)) as f:
             return json.load(f)
-    except: return {}
+    except Exception:
+        return {}
 
 @app.route("/")
 def index():
     lang = request.args.get("lang") or request.cookies.get("lang", "en")
-    if lang not in T: lang = "en"
-    resp = make_response(render_template_string(HTML, t=T[lang], lang=lang))
-    resp.set_cookie("lang", lang, max_age=86400*365)
+    if lang not in T:
+        lang = "en"
+    page = HTML.replace("__TRANS__", json.dumps(T[lang])).replace("__LANG__", lang)
+    resp = make_response(page)
+    resp.set_cookie("lang", lang, max_age=86400 * 365)
     return resp
 
 @app.route("/api/status")
@@ -3629,15 +3852,19 @@ def api_status():
                 h, m = int(e.get("hour", 0)), int(e.get("minute", 0))
             elif isinstance(e, str) and ":" in e:
                 h, m = map(int, e.split(":"))
-            else: continue
+            else:
+                continue
             times.append((h, m))
-        times.sort(key=lambda x: x[0]*60+x[1])
-        nxt = None; idx = -1
+        times.sort(key=lambda x: x[0] * 60 + x[1])
+        nxt = None
+        idx = -1
         for i, (h, m) in enumerate(times):
-            if h*60+m > curr:
-                nxt = f"{h:02d}:{m:02d}"; idx = i; break
+            if h * 60 + m > curr:
+                nxt = "%02d:%02d" % (h, m)
+                idx = i
+                break
         if not nxt and times:
-            nxt = f"{times[0][0]:02d}:{times[0][1]:02d}"
+            nxt = "%02d:%02d" % (times[0][0], times[0][1])
             schedule_info["next"] = nxt
             schedule_info["next_idx"] = 0
             schedule_info["total"] = len(times)
@@ -3655,7 +3882,8 @@ def api_status():
                 lf = lft
             elif isinstance(lft, str):
                 lf = time.mktime(time.strptime(lft, "%Y-%m-%d %H:%M:%S"))
-        except: pass
+        except Exception:
+            pass
     if lf is None and "last_feed" in state:
         lf = state["last_feed"]
     if lf is not None:
