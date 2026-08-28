@@ -3684,27 +3684,25 @@ main .panel:nth-of-type(4){animation-delay:.36s}
 .sweep{font-family:var(--mono);font-size:.7rem;color:var(--faint)}
 .sweep.stale{animation:blink 1s step-end infinite}
 @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.35}}
-.tank-wrap{display:flex;gap:24px;align-items:stretch;justify-content:center;padding:4px 0 2px}
-.tank{position:relative;width:92px;height:208px;border:1px solid var(--line);border-radius:12px;background:rgba(6,19,28,.65);overflow:hidden}
-.ticks span{position:absolute;left:0;right:0;border-top:1px dashed rgba(127,163,178,.22)}
-.ticks span:nth-child(1){bottom:25%}.ticks span:nth-child(2){bottom:50%}.ticks span:nth-child(3){bottom:75%}
-.water{position:absolute;left:0;right:0;bottom:0;height:0%;background:linear-gradient(180deg,rgba(55,210,187,.95),rgba(23,120,110,.95));transition:height 1.1s cubic-bezier(.22,1,.36,1)}
-.water.warn{background:linear-gradient(180deg,rgba(240,160,75,.95),rgba(160,95,35,.95))}
-.water.low{background:linear-gradient(180deg,rgba(225,85,84,.95),rgba(150,45,45,.95))}
-.water::after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.18) 45%,transparent 60%);animation:shimmer 4.5s ease-in-out infinite}
-@keyframes shimmer{0%{transform:translateX(-60%)}100%{transform:translateX(220%)}}
-.ripple{position:absolute;top:-4px;left:-30%;width:60%;height:8px;border-radius:50%;background:rgba(255,255,255,.3);filter:blur(3px);animation:flow 4.5s ease-in-out infinite}
-.r2{animation-delay:2.2s}
-@keyframes flow{0%{left:-30%;opacity:.5}50%{left:70%;opacity:.95}100%{left:130%;opacity:.5}}
-.tank-data{display:flex;flex-direction:column;justify-content:center;gap:6px;min-width:132px}
-.pct{font-family:var(--mono);font-size:3rem;font-weight:600;line-height:1;display:flex;align-items:baseline;gap:4px}
+.gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0 2px}
+.gauge-box{position:relative;width:212px;height:212px}
+.gauge{width:100%;height:100%;transform:rotate(135deg)}
+.gauge-track{fill:none;stroke:rgba(127,163,178,.14);stroke-width:11;stroke-linecap:round}
+.gauge-arc{fill:none;stroke:var(--aqua);stroke-width:11;stroke-linecap:round;stroke-dasharray:395.84 527.79;stroke-dashoffset:395.84;transition:stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1),stroke .6s;filter:drop-shadow(0 0 8px rgba(55,210,187,.45))}
+.gauge-arc.warn{stroke:var(--amber);filter:drop-shadow(0 0 8px rgba(240,160,75,.45))}
+.gauge-arc.low{stroke:var(--red);animation:arcpulse 1.4s ease-in-out infinite}
+@keyframes arcpulse{0%,100%{filter:drop-shadow(0 0 5px rgba(225,85,84,.35))}50%{filter:drop-shadow(0 0 13px rgba(225,85,84,.75))}}
+.gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+.pct{font-family:var(--mono);font-size:2.7rem;font-weight:600;line-height:1;display:flex;align-items:baseline;gap:4px}
 .pct .unit{font-size:1rem;color:var(--dim)}
 .pct.pop{animation:pop .45s ease-out}
-@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.09);color:var(--aqua)}100%{transform:scale(1)}}
+@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.1);color:var(--aqua)}100%{transform:scale(1)}}
 .volts{font-family:var(--mono);font-size:.95rem}
+.gauge-meta{display:flex;align-items:center;gap:12px}
 .amps{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
-.bstat{font-family:var(--mono);font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;color:var(--green);margin-top:2px}
-.bstat.warn{color:var(--amber)}.bstat.low{color:var(--red)}
+.bstat{font-family:var(--mono);font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;color:var(--green);border:1px solid rgba(90,209,160,.35);background:rgba(90,209,160,.08);padding:4px 12px;border-radius:999px}
+.bstat.warn{color:var(--amber);border-color:rgba(240,160,75,.4);background:rgba(240,160,75,.08)}
+.bstat.low{color:var(--red);border-color:rgba(225,85,84,.4);background:rgba(225,85,84,.08)}
 .kv{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid rgba(127,163,178,.09)}
 .kv:last-of-type{border-bottom:none}
 .k{font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
@@ -3783,14 +3781,18 @@ footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem
   <main>
     <section class="panel tank-panel">
       <div class="panel-head"><span class="kicker" id="kPower"></span><span class="sweep" id="sweep"></span></div>
-      <div class="tank-wrap">
-        <div class="tank">
-          <div class="ticks"><span></span><span></span><span></span></div>
-          <div class="water" id="water"><div class="ripple r1"></div><div class="ripple r2"></div></div>
+      <div class="gauge-wrap">
+        <div class="gauge-box">
+          <svg class="gauge" viewBox="0 0 200 200">
+            <circle class="gauge-track" cx="100" cy="100" r="84"></circle>
+            <circle class="gauge-arc" id="battArc" cx="100" cy="100" r="84"></circle>
+          </svg>
+          <div class="gauge-center">
+            <div class="pct" id="pct">--<span class="unit">%</span></div>
+            <div class="volts" id="volts">--</div>
+          </div>
         </div>
-        <div class="tank-data">
-          <div class="pct" id="pct">--<span class="unit">%</span></div>
-          <div class="volts" id="volts">--</div>
+        <div class="gauge-meta">
           <div class="amps" id="amps"></div>
           <div class="bstat" id="bstat"></div>
         </div>
@@ -3895,12 +3897,13 @@ async function poll(){
     $("wifiBanner").hidden = !s.wifi_setup_needed;
 
     const v = s.battery_voltage;
-    const w = $("water");
+    const arc = $("battArc");
+    const ARC_LEN = 395.84;
     if (v !== null && v !== undefined) {
       const p = pctFrom(v);
       const tier = (v < 5.0 || p < 20) ? "low" : (p < 50 ? "warn" : "");
-      w.style.height = p + "%";
-      w.className = "water" + (tier ? " " + tier : "");
+      arc.style.strokeDashoffset = (ARC_LEN * (1 - p / 100)).toFixed(2);
+      arc.className = "gauge-arc" + (tier ? " " + tier : "");
       if (lastPct !== null && Math.round(p) !== Math.round(lastPct)) pop($("pct"));
       lastPct = p;
       $("pct").innerHTML = p.toFixed(0) + '<span class="unit">%</span>';
@@ -3911,12 +3914,13 @@ async function poll(){
       else if (p < 50) { bs.textContent = T.low; bs.className = "bstat warn"; }
       else { bs.textContent = T.ok; bs.className = "bstat"; }
     } else {
-      w.style.height = "0%";
-      w.className = "water";
+      arc.style.strokeDashoffset = ARC_LEN;
+      arc.className = "gauge-arc";
       $("pct").innerHTML = '--<span class="unit">%</span>';
       $("volts").textContent = T.no_sensor;
       $("amps").textContent = "";
       $("bstat").textContent = "";
+      $("bstat").className = "bstat";
       lastPct = null;
     }
 
