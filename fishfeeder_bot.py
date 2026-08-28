@@ -110,7 +110,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.4.0"
+BOT_VERSION = "3.4.1"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -4293,6 +4293,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=no
+KillMode=none
 ExecStart=/usr/bin/python3 /home/sira/fishfeeder/wifi_portal.py
 [Install]
 WantedBy=multi-user.target
@@ -4308,6 +4309,8 @@ HOTSPOT_CONN = "FishFeeder-Hotspot"
 AP_SSID = "FishFeeder-Setup"
 AP_PASSWORD = "fishfeeder"
 PORT = 8080
+DAEMON_LOG = "/tmp/wifi_portal.log"
+PORTAL_TIMEOUT = 1800  # fail-open after 30 min without success
 
 STATE = {"connected": False, "ssid": None}
 
@@ -4520,30 +4523,60 @@ def main():
         print("Internet OK - no WiFi setup needed")
         sys.exit(0)
     write_state(wifi="setup", wifi_setup_needed=True)
-    print("No internet - starting WiFi setup portal")
+    print("No internet - starting WiFi setup portal (detached)")
     if not start_hotspot():
         print("Failed to start hotspot")
     ap_ip = get_ap_ip()
     print("Hotspot: %s | Setup page: http://%s:%d" % (AP_SSID, ap_ip, PORT))
-    global server
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    while not STATE["connected"]:
-        time.sleep(10)
-        if internet_ok():
-            STATE["connected"] = True
-            break
+    # Run the portal in the background so systemd services are NOT blocked
     try:
-        server.shutdown()
+        subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--daemon"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True, cwd=REPO_DIR)
+    except Exception as e:
+        print("Failed to spawn daemon: %s" % e)
+    sys.exit(0)
+
+def daemon_main():
+    # Background daemon: serve the setup page until WiFi works or timeout.
+    try:
+        sys.stdout = open(DAEMON_LOG, "a")
+        sys.stderr = sys.stdout
     except Exception:
         pass
-    stop_hotspot()
-    write_state(wifi="ok", wifi_setup_needed=False)
-    print("WiFi connected - exiting setup portal")
+    try:
+        global server
+        server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        started = time.time()
+        while not STATE["connected"]:
+            time.sleep(10)
+            if internet_ok():
+                STATE["connected"] = True
+                break
+            if time.time() - started > PORTAL_TIMEOUT:
+                print("Portal timeout - exiting (fail-open)")
+                break
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        stop_hotspot()
+        if STATE["connected"]:
+            write_state(wifi="ok", wifi_setup_needed=False)
+        else:
+            write_state(wifi="timeout", wifi_setup_needed=False)
+        print("Portal daemon exiting")
+    except Exception as e:
+        print("Portal daemon error: %s" % e)
     sys.exit(0)
 
 if __name__ == "__main__":
-    main()
+    if "--daemon" in sys.argv:
+        daemon_main()
+    else:
+        main()
 """
 
 if __name__ == "__main__":
