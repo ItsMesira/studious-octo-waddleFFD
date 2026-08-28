@@ -6,4 +6,8 @@ auto_update.json
 shared_state.json
 state.json
 schedules.json
+pi_gui.py
+web_dashboard.py
+wifi_portal.py
 command.json
+battery_config.json

@@ -1,7 +1,0 @@
-{
-  "min_voltage": 5.0,
-  "max_current_ma": 1200,
-  "warning_threshold": 5.3,
-  "full_voltage": 6.5,
-  "empty_voltage": 5.0
-}

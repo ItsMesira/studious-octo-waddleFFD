@@ -86,6 +86,7 @@ BATTERY_MAX_CURRENT_MA = 1200
 LOW_BATTERY_WARNING_THRESHOLD = 5.3  # Warn user below this voltage
 BATTERY_FULL_VOLTAGE = 6.5          # Voltage considered 100%
 BATTERY_EMPTY_VOLTAGE = 5.0         # Voltage considered 0% (below = blackout)
+BATTERY_CONFIG_VERSION = 2          # Bump to force-reset stale config files
 
 # INA219 config
 SHUNT_OHMS = 0.1
@@ -104,7 +105,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.2.1"
+BOT_VERSION = "3.2.2"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -918,6 +919,8 @@ def load_battery_config():
     """Load battery configuration from file."""
     global BATTERY_MIN_VOLTAGE, BATTERY_MAX_CURRENT_MA, LOW_BATTERY_WARNING_THRESHOLD, BATTERY_FULL_VOLTAGE, BATTERY_EMPTY_VOLTAGE
     config = load_json_file(BATTERY_CONFIG_FILE, {})
+    if config.get("config_version") != BATTERY_CONFIG_VERSION:
+        config = {}
 
     if config:
         BATTERY_MIN_VOLTAGE = config.get("min_voltage", BATTERY_MIN_VOLTAGE)
@@ -926,11 +929,15 @@ def load_battery_config():
         BATTERY_FULL_VOLTAGE = config.get("full_voltage", BATTERY_FULL_VOLTAGE)
         BATTERY_EMPTY_VOLTAGE = config.get("empty_voltage", BATTERY_EMPTY_VOLTAGE)
         logger.info(f"Loaded battery config: min={BATTERY_MIN_VOLTAGE}V, full={BATTERY_FULL_VOLTAGE}V, empty={BATTERY_EMPTY_VOLTAGE}V")
+    else:
+        save_battery_config()
+        logger.info("Battery config reset to defaults (schema v%d)", BATTERY_CONFIG_VERSION)
 
 
 def save_battery_config():
     """Save current battery configuration to file."""
     config = {
+        "config_version": BATTERY_CONFIG_VERSION,
         "min_voltage": BATTERY_MIN_VOLTAGE,
         "max_current_ma": BATTERY_MAX_CURRENT_MA,
         "warning_threshold": LOW_BATTERY_WARNING_THRESHOLD,
@@ -1770,6 +1777,60 @@ def _install_portal():
         logger.error("Failed to install WiFi Setup Portal: %s", e)
         return False
 
+def _ngrok_creds():
+    ngrok_auth = os.environ.get("NGROK_AUTH", "")
+    ngrok_domain = os.environ.get("NGROK_DOMAIN", "")
+    if os.path.exists(NGROK_CONFIG_FILE):
+        try:
+            with open(NGROK_CONFIG_FILE) as f:
+                ngrok_cfg = json.load(f)
+            ngrok_auth = ngrok_cfg.get("auth", ngrok_auth)
+            ngrok_domain = ngrok_cfg.get("domain", ngrok_domain)
+        except Exception:
+            pass
+    return ngrok_auth, ngrok_domain
+
+def start_ngrok():
+    """Start the ngrok tunnel if credentials are configured. Returns True if launched."""
+    ngrok_auth, ngrok_domain = _ngrok_creds()
+    if not (ngrok_auth and ngrok_domain):
+        return False
+    try:
+        if not os.path.exists(NGROK_CONFIG_FILE):
+            with open(NGROK_CONFIG_FILE, "w") as f:
+                json.dump({"auth": ngrok_auth, "domain": ngrok_domain}, f)
+        ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if not ngrok_path:
+            logger.warning("ngrok binary not found")
+            return False
+        subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
+        subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_auth], capture_output=True, timeout=10)
+        subprocess.Popen([ngrok_path, "http", "--url=" + ngrok_domain, "5000"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("Ngrok tunnel started: %s", ngrok_domain)
+        return True
+    except Exception as e:
+        logger.warning("Ngrok auto-start: %s", e)
+        return False
+
+def ngrok_running():
+    try:
+        r = subprocess.run(["pgrep", "-f", "ngrok"], capture_output=True, text=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+async def ngrok_watchdog():
+    """Keep the ngrok tunnel alive; retry every 60s if it died."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if not ngrok_running():
+                logger.info("ngrok tunnel down - restarting")
+                start_ngrok()
+        except Exception as e:
+            logger.debug("ngrok_watchdog: %s", e)
+
 def _git(*args, **kwargs):
     kwargs.setdefault("cwd", REPO_DIR)
     kwargs.setdefault("capture_output", True)
@@ -1787,7 +1848,16 @@ async def process_git_update():
             write_shared_state(update_status="up_to_date")
             return
 
-        _git("pull", GIT_REMOTE, GIT_BRANCH)
+        pull = _git("pull", GIT_REMOTE, GIT_BRANCH)
+        if pull.returncode != 0:
+            # Pull failed (local conflict or stale tracked file). Self-heal: force reset to remote.
+            logger.warning("git pull failed (%s), force-resetting to remote", (pull.stderr or "").strip())
+            _git("reset", "--hard", f"{GIT_REMOTE}/{GIT_BRANCH}")
+            pull = _git("pull", GIT_REMOTE, GIT_BRANCH)
+            if pull.returncode != 0:
+                logger.error("git pull failed after reset: %s", (pull.stderr or "").strip())
+                write_shared_state(update_status="error")
+                return
         write_shared_state(update_status="restarting", last_updated=time.time())
         await asyncio.sleep(1)
 
@@ -1999,31 +2069,9 @@ async def on_ready():
     _install_web()
     _install_portal()
 
-    # Start ngrok tunnel if configured
-    ngrok_auth = os.environ.get("NGROK_AUTH", "")
-    ngrok_domain = os.environ.get("NGROK_DOMAIN", "")
-    if os.path.exists(NGROK_CONFIG_FILE):
-        try:
-            with open(NGROK_CONFIG_FILE) as f:
-                ngrok_cfg = json.load(f)
-            ngrok_auth = ngrok_cfg.get("auth", ngrok_auth)
-            ngrok_domain = ngrok_cfg.get("domain", ngrok_domain)
-        except Exception:
-            pass
-    if ngrok_auth and ngrok_domain:
-        try:
-            if not os.path.exists(NGROK_CONFIG_FILE):
-                with open(NGROK_CONFIG_FILE, "w") as f:
-                    json.dump({"auth": ngrok_auth, "domain": ngrok_domain}, f)
-            ngrok_path = subprocess.run(["which", "ngrok"], capture_output=True, text=True, timeout=5).stdout.strip()
-            if ngrok_path:
-                subprocess.run(["pkill", "-f", "ngrok"], capture_output=True)
-                subprocess.run([ngrok_path, "config", "add-authtoken", ngrok_auth], capture_output=True, timeout=10)
-                subprocess.Popen([ngrok_path, "http", "--url=" + ngrok_domain, "5000"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                logger.info("Ngrok tunnel started: %s", ngrok_domain)
-        except Exception as e:
-            logger.warning("Ngrok auto-start: %s", e)
+    # Start ngrok tunnel if configured (with watchdog retry)
+    start_ngrok()
+    bot.loop.create_task(ngrok_watchdog())
 
 @bot.event
 async def on_connect():
