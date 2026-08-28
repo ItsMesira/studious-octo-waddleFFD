@@ -86,7 +86,12 @@ BATTERY_MAX_CURRENT_MA = 1200
 LOW_BATTERY_WARNING_THRESHOLD = 5.3  # Warn user below this voltage
 BATTERY_FULL_VOLTAGE = 6.4          # Voltage considered 100%
 BATTERY_EMPTY_VOLTAGE = 5.0         # Voltage considered 0% (below = blackout)
-BATTERY_CONFIG_VERSION = 4          # Bump to force-reset stale config files
+BATTERY_CAPACITY_AH = 65.0          # Total pack capacity (32.5Ah x2)
+BATTERY_CONFIG_VERSION = 5          # Bump to force-reset stale config files
+
+# Coulomb counting state
+battery_consumed_mah = 0.0          # Total energy drawn (persisted in state.json)
+_last_batt_read_ts = None
 
 # INA219 config
 SHUNT_OHMS = 0.1
@@ -105,7 +110,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.3.3"
+BOT_VERSION = "3.4.0"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -250,6 +255,8 @@ TRANSLATIONS = {
         "bat_read_failed": "INA219 read failed (I/O).",
         "bat_msg": "Voltage: {v:.2f}V{p}, Current: {c}, Shunt: {s:.1f}mV",
         "bat_current_na": "N/A",
+        "bat_cap_line": "🔋 Capacity: {cap:.1f}Ah · Remaining: {rem:.1f}Ah · Est. runtime: {rt}",
+        "bat_cap_reset": "✅ Energy counter reset",
         "sched_cmd_added": "Scheduled daily feed at {h:02d}:{m:02d} for {d}s",
         "sched_list_title": "Schedules:",
         "sched_list_empty": "No schedules.",
@@ -432,6 +439,8 @@ TRANSLATIONS = {
         "bat_read_failed": "อ่านค่า INA219 ล้มเหลว",
         "bat_msg": "แรงดัน: {v:.2f}V{p}, กระแส: {c}, Shunt: {s:.1f}mV",
         "bat_current_na": "N/A",
+        "bat_cap_line": "🔋 ความจุ: {cap:.1f}Ah · คงเหลือ: {rem:.1f}Ah · เวลาใช้งานโดยประมาณ: {rt}",
+        "bat_cap_reset": "✅ รีเซ็ตตัวนับพลังงานแล้ว",
         "sched_cmd_added": "ตั้งเวลาให้อาหารทุกวันที่ {h:02d}:{m:02d} นาน {d} วินาที",
         "sched_list_title": "รายการตารางเวลา:",
         "sched_list_empty": "ไม่มีตารางเวลา",
@@ -614,6 +623,8 @@ TRANSLATIONS = {
         "bat_read_failed": "INA219 读取失败 (I/O)。",
         "bat_msg": "电压: {v:.2f}V{p}, 电流: {c}, 分流: {s:.1f}mV",
         "bat_current_na": "N/A",
+        "bat_cap_line": "🔋 容量: {cap:.1f}Ah · 剩余: {rem:.1f}Ah · 预计运行: {rt}",
+        "bat_cap_reset": "✅ 电量计数已重置",
         "sched_cmd_added": "已将每日喂食安排在 {h:02d}:{m:02d} 持续 {d} 秒",
         "sched_list_title": "日程表:",
         "sched_list_empty": "无日程。",
@@ -917,7 +928,7 @@ def save_authorized_users():
 
 def load_battery_config():
     """Load battery configuration from file."""
-    global BATTERY_MIN_VOLTAGE, BATTERY_MAX_CURRENT_MA, LOW_BATTERY_WARNING_THRESHOLD, BATTERY_FULL_VOLTAGE, BATTERY_EMPTY_VOLTAGE
+    global BATTERY_MIN_VOLTAGE, BATTERY_MAX_CURRENT_MA, LOW_BATTERY_WARNING_THRESHOLD, BATTERY_FULL_VOLTAGE, BATTERY_EMPTY_VOLTAGE, BATTERY_CAPACITY_AH
     config = load_json_file(BATTERY_CONFIG_FILE, {})
     if config.get("config_version") != BATTERY_CONFIG_VERSION:
         config = {}
@@ -928,7 +939,8 @@ def load_battery_config():
         LOW_BATTERY_WARNING_THRESHOLD = config.get("warning_threshold", LOW_BATTERY_WARNING_THRESHOLD)
         BATTERY_FULL_VOLTAGE = config.get("full_voltage", BATTERY_FULL_VOLTAGE)
         BATTERY_EMPTY_VOLTAGE = config.get("empty_voltage", BATTERY_EMPTY_VOLTAGE)
-        logger.info(f"Loaded battery config: min={BATTERY_MIN_VOLTAGE}V, full={BATTERY_FULL_VOLTAGE}V, empty={BATTERY_EMPTY_VOLTAGE}V")
+        BATTERY_CAPACITY_AH = config.get("capacity_ah", BATTERY_CAPACITY_AH)
+        logger.info(f"Loaded battery config: min={BATTERY_MIN_VOLTAGE}V, full={BATTERY_FULL_VOLTAGE}V, empty={BATTERY_EMPTY_VOLTAGE}V, capacity={BATTERY_CAPACITY_AH}Ah")
     else:
         save_battery_config()
         logger.info("Battery config reset to defaults (schema v%d)", BATTERY_CONFIG_VERSION)
@@ -942,7 +954,8 @@ def save_battery_config():
         "max_current_ma": BATTERY_MAX_CURRENT_MA,
         "warning_threshold": LOW_BATTERY_WARNING_THRESHOLD,
         "full_voltage": BATTERY_FULL_VOLTAGE,
-        "empty_voltage": BATTERY_EMPTY_VOLTAGE
+        "empty_voltage": BATTERY_EMPTY_VOLTAGE,
+        "capacity_ah": BATTERY_CAPACITY_AH
     }
     save_json_file(BATTERY_CONFIG_FILE, config)
     logger.info("Battery config saved")
@@ -975,7 +988,7 @@ def write_shared_state(**kwargs):
         pass
 
 def load_state():
-    global last_feed_time
+    global last_feed_time, battery_consumed_mah
     d = load_json_file(STATE_FILE, {})
     if d.get("last_feed_time"):
         try:
@@ -983,10 +996,16 @@ def load_state():
             logger.info("Loaded last_feed_time: %s", last_feed_time)
         except Exception as e:
             logger.warning("Invalid last_feed_time format in state: %s", e)
+    battery_consumed_mah = float(d.get("battery_consumed_mah", 0.0))
+    if battery_consumed_mah > 0:
+        logger.info("Loaded battery consumed: %.1f mAh", battery_consumed_mah)
 
 def save_state():
     try:
-        d = {"last_feed_time": last_feed_time.isoformat() if last_feed_time else None}
+        d = {
+            "last_feed_time": last_feed_time.isoformat() if last_feed_time else None,
+            "battery_consumed_mah": battery_consumed_mah,
+        }
         save_json_file(STATE_FILE, d)
     except Exception as e:
         logger.warning("Failed to save state: %s", e)
@@ -1176,7 +1195,7 @@ def restore_last_network():
         return False
 
 def read_battery():
-    global ina, have_ina
+    global ina, have_ina, battery_consumed_mah, _last_batt_read_ts
     if not ensure_ina_ready():
         write_shared_state(battery_voltage=None, battery_current=None, battery_shunt=None)
         return None
@@ -1196,12 +1215,33 @@ def read_battery():
                     current_ma = None
             else:
                 current_ma = None
+
+        # Coulomb counting: integrate current over time since last read
+        now = time.time()
+        if _last_batt_read_ts is not None and current_ma is not None and current_ma > 0:
+            elapsed = min(now - _last_batt_read_ts, 600.0)  # cap 10 min per step
+            if elapsed > 1.0:
+                battery_consumed_mah += current_ma * (elapsed / 3600.0)
+                save_state()
+        _last_batt_read_ts = now
+
+        remaining_ah = max(0.0, BATTERY_CAPACITY_AH - battery_consumed_mah / 1000.0)
+        runtime_hours = None
+        if current_ma is not None and current_ma > 0:
+            runtime_hours = remaining_ah / (current_ma / 1000.0)
+
         result = {
             "voltage": v_bus,
             "current_ma": current_ma,
             "shunt_mv": shunt_mv,
         }
-        write_shared_state(battery_voltage=v_bus, battery_current=current_ma, battery_shunt=shunt_mv)
+        write_shared_state(
+            battery_voltage=v_bus, battery_current=current_ma, battery_shunt=shunt_mv,
+            battery_capacity_ah=BATTERY_CAPACITY_AH,
+            battery_consumed_mah=battery_consumed_mah,
+            battery_remaining_ah=remaining_ah,
+            battery_runtime_hours=runtime_hours,
+        )
         return result
     except Exception as e:
         logger.warning("INA219 read error: %s", e)
@@ -2667,6 +2707,12 @@ async def cmd_battery(ctx):
     c_str = f"{current_ma:.0f}mA" if current_ma is not None else t("bat_current_na")
     await ctx.send(t("bat_msg", v=voltage, p=pct_str, c=c_str, s=shunt_mv))
 
+    remaining_ah = max(0.0, BATTERY_CAPACITY_AH - battery_consumed_mah / 1000.0)
+    runtime_str = "N/A"
+    if current_ma is not None and current_ma > 0:
+        runtime_str = f"{remaining_ah / (current_ma / 1000.0):.0f}h"
+    await ctx.send(t("bat_cap_line", cap=BATTERY_CAPACITY_AH, rem=remaining_ah, rt=runtime_str))
+
 
 @bot.command(name="panel")
 @owner_check()
@@ -2725,7 +2771,7 @@ async def cmd_debug_io(ctx):
 @owner_check()
 async def cmd_battery_config(ctx, setting: str = None, value: float = None):
     """View or change battery threshold settings."""
-    global BATTERY_MIN_VOLTAGE, BATTERY_MAX_CURRENT_MA, LOW_BATTERY_WARNING_THRESHOLD, BATTERY_FULL_VOLTAGE, BATTERY_EMPTY_VOLTAGE
+    global BATTERY_MIN_VOLTAGE, BATTERY_MAX_CURRENT_MA, LOW_BATTERY_WARNING_THRESHOLD, BATTERY_FULL_VOLTAGE, BATTERY_EMPTY_VOLTAGE, BATTERY_CAPACITY_AH, battery_consumed_mah, _last_batt_read_ts
 
     # No arguments - show current config
     if setting is None:
@@ -2735,16 +2781,27 @@ async def cmd_battery_config(ctx, setting: str = None, value: float = None):
         msg += f"Max Current:         {BATTERY_MAX_CURRENT_MA:.0f}mA\n"
         msg += f"100% Ref Voltage:    {f'{BATTERY_FULL_VOLTAGE:.2f}V' if BATTERY_FULL_VOLTAGE else 'Not Set'}\n"
         msg += f"0% Ref Voltage:      {f'{BATTERY_EMPTY_VOLTAGE:.2f}V' if BATTERY_EMPTY_VOLTAGE else 'Not Set'}\n"
+        msg += f"Capacity:            {BATTERY_CAPACITY_AH:.1f}Ah\n"
+        msg += f"Consumed:            {battery_consumed_mah / 1000.0:.2f}Ah\n"
+        msg += f"Remaining:           {max(0.0, BATTERY_CAPACITY_AH - battery_consumed_mah / 1000.0):.2f}Ah\n"
         msg += "```\n"
         msg += t("bat_conf_pct_on") if BATTERY_FULL_VOLTAGE and BATTERY_EMPTY_VOLTAGE else t("bat_conf_pct_off")
         await ctx.send(msg)
         return
 
+    setting = setting.lower()
+
+    # Reset coulomb counter
+    if setting in ("reset", "reset_counter", "resetcounter"):
+        battery_consumed_mah = 0.0
+        _last_batt_read_ts = None
+        save_state()
+        await ctx.send(t("bat_cap_reset"))
+        return
+
     if value is None:
         await ctx.send(t("bat_conf_usage"))
         return
-
-    setting = setting.lower()
 
     # ponytail: dict-driven config map avoids five near-identical branches
     config_map = {
@@ -2753,6 +2810,7 @@ async def cmd_battery_config(ctx, setting: str = None, value: float = None):
         ("max_current", "maxcurrent", "current"): ("BATTERY_MAX_CURRENT_MA", 0, 10000, "Max Current", "max_current", "{:.0f}mA"),
         ("full", "full_voltage", "max"): ("BATTERY_FULL_VOLTAGE", 0, 15, "100% Ref", "full_voltage", "{:.2f}V"),
         ("empty", "empty_voltage", "low"): ("BATTERY_EMPTY_VOLTAGE", 0, 15, "0% Ref", "empty_voltage", "{:.2f}V"),
+        ("capacity", "cap", "ah"): ("BATTERY_CAPACITY_AH", 0, 1000, "Capacity", "capacity", "{:.1f}Ah"),
     }
 
     for aliases, (var_name, v_min, v_max, label, log_key, fmt) in config_map.items():
@@ -3586,7 +3644,8 @@ T = {
   "all_feeds": "All feed times", "add_time": "Add time", "clear_all": "Clear all",
   "sched_empty": "No feed times set", "sched_added": "Time added",
   "sched_removed": "Time removed", "sched_cleared": "All cleared",
-  "confirm_clear": "Clear all feed times?"
+  "confirm_clear": "Clear all feed times?",
+  "est": "est"
 },
 "th": {
   "title": "สถานีให้อาหารปลา", "station": "สมุทรปราการ · สถานี 01",
@@ -3604,7 +3663,8 @@ T = {
   "all_feeds": "เวลาอาหารทั้งหมด", "add_time": "เพิ่มเวลา", "clear_all": "ล้างทั้งหมด",
   "sched_empty": "ยังไม่ตั้งเวลาอาหาร", "sched_added": "เพิ่มเวลาแล้ว",
   "sched_removed": "ลบเวลาแล้ว", "sched_cleared": "ล้างทั้งหมดแล้ว",
-  "confirm_clear": "ล้างเวลาอาหารทั้งหมด?"
+  "confirm_clear": "ล้างเวลาอาหารทั้งหมด?",
+  "est": "โดยประมาณ"
 },
 "zh": {
   "title": "喂食站", "station": "北榄府 · 01号站",
@@ -3703,6 +3763,7 @@ main .panel:nth-of-type(4){animation-delay:.36s}
 .bstat{font-family:var(--mono);font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;color:var(--green);border:1px solid rgba(90,209,160,.35);background:rgba(90,209,160,.08);padding:4px 12px;border-radius:999px}
 .bstat.warn{color:var(--amber);border-color:rgba(240,160,75,.4);background:rgba(240,160,75,.08)}
 .bstat.low{color:var(--red);border-color:rgba(225,85,84,.4);background:rgba(225,85,84,.08)}
+.cap{font-family:var(--mono);font-size:.72rem;color:var(--dim);letter-spacing:.03em}
 .kv{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px solid rgba(127,163,178,.09)}
 .kv:last-of-type{border-bottom:none}
 .k{font-size:.72rem;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
@@ -3796,6 +3857,7 @@ footer{margin-top:28px;text-align:center;font-family:var(--mono);font-size:.7rem
           <div class="amps" id="amps"></div>
           <div class="bstat" id="bstat"></div>
         </div>
+        <div class="cap" id="battCap"></div>
       </div>
     </section>
 
@@ -3909,6 +3971,12 @@ async function poll(){
       $("pct").innerHTML = p.toFixed(0) + '<span class="unit">%</span>';
       $("volts").textContent = v.toFixed(2) + " V";
       $("amps").textContent = (s.battery_current !== null && s.battery_current !== undefined) ? s.battery_current.toFixed(0) + " mA" : "";
+      const capEl = $("battCap");
+      if (s.battery_remaining_ah !== null && s.battery_remaining_ah !== undefined) {
+        let rt = s.battery_runtime_hours;
+        let rtStr = (rt !== null && rt !== undefined) ? Math.round(rt) + "h " + T.est : "—";
+        capEl.textContent = s.battery_remaining_ah.toFixed(1) + " / " + (s.battery_capacity_ah !== null && s.battery_capacity_ah !== undefined ? s.battery_capacity_ah.toFixed(1) : "?") + " Ah · " + rtStr;
+      } else capEl.textContent = "";
       const bs = $("bstat");
       if (v < 5.0 || p < 20) { bs.textContent = T.crit; bs.className = "bstat low"; }
       else if (p < 50) { bs.textContent = T.low; bs.className = "bstat warn"; }
@@ -3921,6 +3989,7 @@ async function poll(){
       $("amps").textContent = "";
       $("bstat").textContent = "";
       $("bstat").className = "bstat";
+      $("battCap").textContent = "";
       lastPct = null;
     }
 
