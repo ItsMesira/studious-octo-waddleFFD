@@ -105,7 +105,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.3.0"
+BOT_VERSION = "3.3.1"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
