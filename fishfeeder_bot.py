@@ -81,12 +81,12 @@ FEED_DURATION_DEFAULT = 5   # seconds
 FEED_DURATION_MAX = 30      # seconds cap
 
 # Default battery thresholds (can be changed via !battery_config)
-BATTERY_MIN_VOLTAGE = 5.0
+BATTERY_MIN_VOLTAGE = 5.2
 BATTERY_MAX_CURRENT_MA = 1200
 LOW_BATTERY_WARNING_THRESHOLD = 5.3  # Warn user below this voltage
 BATTERY_FULL_VOLTAGE = 6.4          # Voltage considered 100%
 BATTERY_EMPTY_VOLTAGE = 5.0         # Voltage considered 0% (below = blackout)
-BATTERY_CONFIG_VERSION = 3          # Bump to force-reset stale config files
+BATTERY_CONFIG_VERSION = 4          # Bump to force-reset stale config files
 
 # INA219 config
 SHUNT_OHMS = 0.1
@@ -105,7 +105,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.3.2"
+BOT_VERSION = "3.3.3"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
