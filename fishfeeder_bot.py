@@ -110,7 +110,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.4.1"
+BOT_VERSION = "3.4.2"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -2696,18 +2696,20 @@ async def cmd_battery(ctx):
     shunt_mv = v.get("shunt_mv", 0)
 
     pct_str = ""
+    pct_val = 100.0
     if BATTERY_FULL_VOLTAGE and BATTERY_EMPTY_VOLTAGE:
         try:
-             pct = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100
-             pct = max(0, min(100, pct))
-             pct_str = f" (**{pct:.1f}%**)"
+             pct_val = (voltage - BATTERY_EMPTY_VOLTAGE) / (BATTERY_FULL_VOLTAGE - BATTERY_EMPTY_VOLTAGE) * 100
+             pct_val = max(0, min(100, pct_val))
+             pct_str = f" (**{pct_val:.1f}%**)"
         except Exception:
              pass
 
     c_str = f"{current_ma:.0f}mA" if current_ma is not None else t("bat_current_na")
     await ctx.send(t("bat_msg", v=voltage, p=pct_str, c=c_str, s=shunt_mv))
 
-    remaining_ah = max(0.0, BATTERY_CAPACITY_AH - battery_consumed_mah / 1000.0)
+    # %-based capacity estimate (matches the web dashboard)
+    remaining_ah = BATTERY_CAPACITY_AH * pct_val / 100.0
     runtime_str = "N/A"
     if current_ma is not None and current_ma > 0:
         runtime_str = f"{remaining_ah / (current_ma / 1000.0):.0f}h"
@@ -3972,11 +3974,13 @@ async function poll(){
       $("volts").textContent = v.toFixed(2) + " V";
       $("amps").textContent = (s.battery_current !== null && s.battery_current !== undefined) ? s.battery_current.toFixed(0) + " mA" : "";
       const capEl = $("battCap");
-      if (s.battery_remaining_ah !== null && s.battery_remaining_ah !== undefined) {
-        let rt = s.battery_runtime_hours;
-        let rtStr = (rt !== null && rt !== undefined) ? Math.round(rt) + "h " + T.est : "—";
-        capEl.textContent = s.battery_remaining_ah.toFixed(1) + " / " + (s.battery_capacity_ah !== null && s.battery_capacity_ah !== undefined ? s.battery_capacity_ah.toFixed(1) : "?") + " Ah · " + rtStr;
-      } else capEl.textContent = "";
+      const cap = (s.battery_capacity_ah !== null && s.battery_capacity_ah !== undefined) ? s.battery_capacity_ah : 65;
+      const estAh = cap * p / 100;
+      let rtStr = "—";
+      if (s.battery_current !== null && s.battery_current !== undefined && s.battery_current > 0) {
+        rtStr = Math.round(estAh / (s.battery_current / 1000)) + "h " + T.est;
+      }
+      capEl.textContent = estAh.toFixed(1) + " / " + cap.toFixed(1) + " Ah · " + rtStr;
       const bs = $("bstat");
       if (v < 5.0 || p < 20) { bs.textContent = T.crit; bs.className = "bstat low"; }
       else if (p < 50) { bs.textContent = T.low; bs.className = "bstat warn"; }
