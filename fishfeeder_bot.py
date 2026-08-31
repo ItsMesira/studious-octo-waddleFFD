@@ -110,7 +110,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.4.2"
+BOT_VERSION = "3.4.3"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -3952,6 +3952,16 @@ async function poll(){
   try{
     const r = await fetch("/api/status");
     const s = await r.json();
+    // Demo mode: ?demo=80 in the URL fakes a stable battery % for presentations
+    const demoQ = new URLSearchParams(window.location.search);
+    if (demoQ.has("demo")) {
+      const dp = Math.max(0, Math.min(100, parseFloat(demoQ.get("demo")) || 80));
+      s.battery_voltage = 5.0 + (dp / 100) * 1.4;
+      s.battery_current = 210;
+      if (s.battery_capacity_ah === null || s.battery_capacity_ah === undefined) s.battery_capacity_ah = 65;
+      if (s.ts === null || s.ts === undefined) s.ts = Math.floor(Date.now() / 1000);
+      s.wifi_setup_needed = false;
+    }
     const now = Math.floor(Date.now() / 1000);
     const fresh = s.ts && (now - s.ts) < 15;
     $("beacon").className = "beacon" + (fresh ? "" : " stale");
