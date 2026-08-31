@@ -110,7 +110,7 @@ SHARED_STATE_FILE = os.path.join(REPO_DIR, "shared_state.json") # For GUI live s
 COMMAND_FILE = os.path.join(REPO_DIR, "command.json") # For web dashboard controls
 NGROK_CONFIG_FILE = os.path.join(REPO_DIR, "ngrok_config.json")
 AUTO_UPDATE_FILE = os.path.join(REPO_DIR, "auto_update.json")
-BOT_VERSION = "3.4.3"
+BOT_VERSION = "3.4.4"
 GIT_REMOTE = "origin"
 GIT_BRANCH = "main"
 
@@ -2522,94 +2522,120 @@ async def cmd_authorized_list(ctx):
 
 @bot.command(name="help")
 async def cmd_help(ctx):
-    """Show all available commands with descriptions."""
+    """Show all available commands in a structured embed."""
     user_id = ctx.author.id
     is_authorized = (user_id == OWNER_ID or user_id in authorized_users)
+    is_owner = (user_id == OWNER_ID)
 
-    # Build comprehensive help message - split into multiple messages to avoid Discord limit
-    msg1 = "🐟 **FishFeeder Bot - Command Reference**\n\n"
+    em = discord.Embed(
+        title="🐟 FishFeeder — Command Reference",
+        description="Solar-powered automatic fish feeder · Station 01 · Samutprakan",
+        color=0x37d2bb,
+    )
+    em.add_field(
+        name="📢 Public — anyone can use",
+        value=(
+            "`!status` — motor, battery, last feed\n"
+            "`!battery` — live battery readings\n"
+            "`!checktime` — current time (GMT+7)\n"
+            "`!checkip` — Pi IP addresses\n"
+            "`!wifi_status` — WiFi connection state\n"
+            "`!i2c_scan` — scan the I2C bus\n"
+            "`!lang <en|th|zh>` — change language\n"
+            "`!help` — this message"
+        ),
+        inline=False,
+    )
 
-    # Public Commands
-    msg1 += "**📢 PUBLIC COMMANDS** _(Anyone can use)_\n"
-    msg1 += "```\n"
-    msg1 += "!status          - Show bot status (motor, battery, last feed)\n"
-    msg1 += "!battery         - Display current battery readings\n"
-    msg1 += "!checktime       - Show current time (GMT+7)\n"
-    msg1 += "!checkip         - Show Raspberry Pi IP addresses\n"
-    msg1 += "!wifi_status     - Show current WiFi connection status\n"
-    msg1 += "!help            - Show this help message\n"
-    msg1 += "```\n"
-
-    await ctx.send(msg1)
-
-    # Owner/Authorized Commands
     if is_authorized:
-        msg2 = "**🔒 OWNER/AUTHORIZED COMMANDS** _(Privileged access)_\n\n"
-
-        msg2 += "_Feeding Controls:_\n"
-        msg2 += "```\n"
-        msg2 += "!feed [seconds]        - Feed fish (default 5s, max 30s)\n"
-        msg2 += "!feed_force [seconds]  - Force feed (bypasses battery checks)\n"
-        msg2 += "!reverse [seconds]     - Run motor in reverse (default 3s)\n"
-        msg2 += "!feed_until [timeout]  - Feed until limit switch pressed\n"
-        msg2 += "!stop                  - Emergency motor stop\n"
-        msg2 += "!panel                 - Summon the Control Panel GUI\n"
-        msg2 += "```\n"
-
-        await ctx.send(msg2)
-
-        msg3 = "_Scheduling:_\n"
-        msg3 += "```\n"
-        msg3 += "!schedule_add <hh> <mm> [dur]  - Add daily feeding schedule\n"
-        msg3 += "!schedule_remove <hh> <mm>     - Remove specific schedule\n"
-        msg3 += "!schedule_remove all           - Clear all schedules\n"
-        msg3 += "!schedule_list                 - List all schedules\n"
-        msg3 += "!schedule_clear                - Clear all schedules\n"
-        msg3 += "```\n"
-
-        await ctx.send(msg3)
-
-        msg4 = "_Monitoring:_\n"
-        msg4 += "```\n"
-        msg4 += "!battery_monitor [int] [dur]   - Real-time battery monitor\n"
-        msg4 += "!battery_config [setting] [val] - Configure battery thresholds\n"
-        msg4 += "!i2c_scan                      - Scan I2C bus for devices\n"
-        msg4 += "!pi_info                       - Show Pi model / temp / throttling\n"
-        msg4 += "```\n"
-
-        await ctx.send(msg4)
-
-        msg5 = "_System:_\n"
-        msg5 += "```\n"
-        msg5 += "!add_wifi <SSID> <PASS>  - Add and connect to WiFi network\n"
-        msg5 += "!wifi_scan               - Scan for available WiFi networks\n"
-        msg5 += "!update                  - Pull from Git and restart\n"
-        msg5 += "!update_file             - Upload new bot file via Discord\n"
-        msg5 += "!download <type>         - Download bot/config files via Discord\n"
-        msg5 += "!killswitch              - Emergency stop all & restart bot\n"
-        msg5 += "```\n"
-
-        await ctx.send(msg5)
-
-        if user_id == OWNER_ID:
-            msg6 = "_Authorization (Owner Only):_\n"
-            msg6 += "```\n"
-            msg6 += "!authorize <user_id>       - Grant user access to owner commands\n"
-            msg6 += "!deauthorize <user_id>     - Revoke user access\n"
-            msg6 += "!authorized_list           - Show all authorized users\n"
-            msg6 += "```\n"
-
-            await ctx.send(msg6)
-
-        msg7 = "💡 **Tips:**\n"
-        msg7 += "• Reply 'stop' to end infinite battery monitor\n"
-        msg7 += "• Reply 'RESTART' to confirm killswitch\n"
-        msg7 += "• Reply 'yes' to confirm force feed"
-
-        await ctx.send(msg7)
+        em.add_field(
+            name="🍽 Feeding",
+            value=(
+                "`!feed [s]` — feed (max 30s)\n"
+                "`!reverse [s]` — run motor backward\n"
+                "`!stop` — emergency stop\n"
+                "`!feed_force [s]` — bypass safety\n"
+                "`!feed_until [s]` — until switch\n"
+                "`!killswitch` — stop all + restart\n"
+                "`!panel` — control panel GUI\n"
+                "`!dev_ui` — developer tools"
+            ),
+            inline=True,
+        )
+        em.add_field(
+            name="📅 Schedule",
+            value=(
+                "`!schedule_add <hh> <mm> [dur]`\n"
+                "`!schedule_remove <hh> <mm>`\n"
+                "`!schedule_remove all`\n"
+                "`!schedule_list`\n"
+                "`!schedule_clear`"
+            ),
+            inline=True,
+        )
+        em.add_field(
+            name="🔋 Battery & Hardware",
+            value=(
+                "`!battery_monitor [int] [dur]`\n"
+                "`!battery_config` — view settings\n"
+                "`!battery_config <k> <v>` — change\n"
+                "`!battery_config reset` — zero counter\n"
+                "`!pi_info` — temp / throttling\n"
+                "`!debug_io` — full diagnostics"
+            ),
+            inline=True,
+        )
+        em.add_field(
+            name="🌐 Network",
+            value=(
+                "`!add_wifi <SSID> <PASS>`\n"
+                "`!wifi_scan` — nearby networks\n"
+                "`!checkip` — Pi addresses"
+            ),
+            inline=True,
+        )
+        em.add_field(
+            name="🔄 Updates",
+            value=(
+                "`!update` — pull + restart\n"
+                "`!update status` — version info\n"
+                "`!update check` — force check\n"
+                "`!update toggle` — auto-update on/off\n"
+                "`!update_file` — upload new bot\n"
+                "`!download <type>` — grab files"
+            ),
+            inline=True,
+        )
+        if is_owner:
+            em.add_field(
+                name="🔑 Owner only",
+                value=(
+                    "`!authorize <id>` — grant access\n"
+                    "`!deauthorize <id>` — revoke access\n"
+                    "`!authorized_list` — who has access\n"
+                    "`!shutdown` — power off the Pi"
+                ),
+                inline=True,
+            )
+        em.add_field(
+            name="💡 Tips",
+            value=(
+                "· Reply `stop` to end the battery monitor\n"
+                "· Reply `RESTART` to confirm killswitch\n"
+                "· Reply `yes` to confirm force feed\n"
+                "· Full control also lives on the web dashboard"
+            ),
+            inline=False,
+        )
     else:
-        msg_unauth = "_You don't have access to owner commands. Contact the bot owner for authorization._"
-        await ctx.send(msg_unauth)
+        em.add_field(
+            name="🔒 Locked commands",
+            value="Feeding, scheduling, and system commands require authorization. Ask the owner to run `!authorize <your_id>`.",
+            inline=False,
+        )
+
+    em.set_footer(text=f"MBPatch {BOT_VERSION} · EN / TH / 中文")
+    await ctx.send(embed=em)
 
 
 def battery_ok():
